@@ -1,0 +1,25 @@
+{
+  "name": "aletheia-refdb",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Aletheia-style preprocessing: file selection + pseudo-bundle + swc minification per package version, plus CycloneDX SBOMs, for a pnpm-installed dataset",
+  "engines": {
+    "node": ">=20.12"
+  },
+  "scripts": {
+    "build": "node --max-old-space-size=8000 src/build.mjs",
+    "split": "node src/split-functions.mjs",
+    "test": "node --test test/extract.test.mjs",
+    "deps": "node src/deps-csv.mjs"
+  },
+  "dependencies": {
+    "@swc/core": "^1.7.26",
+    "acorn": "^8.12.0",
+    "acorn-loose": "^8.4.0",
+    "acorn-walk": "^8.3.3",
+    "astring": "^1.9.0",
+    "semver": "^7.8.5",
+    "yaml": "^2.5.0"
+  }
+}

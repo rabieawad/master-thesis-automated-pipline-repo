@@ -1,0 +1,322 @@
+[
+  {
+    "folder": "accessible360__accessible-slick",
+    "name": "@accessible360/accessible-slick",
+    "version": "1.0.1",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 351433
+  },
+  {
+    "folder": "algolia__autocomplete-plugin-recent-searches",
+    "name": "@algolia/autocomplete-plugin-recent-searches",
+    "version": "1.19.12",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 45232
+  },
+  {
+    "folder": "ant-design__icons",
+    "name": "@ant-design/icons",
+    "version": "6.3.4",
+    "ok": true,
+    "dependenciesInBundle": 5,
+    "bundleBytes": 3936902
+  },
+  {
+    "folder": "dailymotion__vast-client",
+    "name": "@dailymotion/vast-client",
+    "version": "6.5.0",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 67400
+  },
+  {
+    "folder": "embrace-io__web-sdk",
+    "name": "@embrace-io/web-sdk",
+    "version": "2.30.0",
+    "ok": true,
+    "dependenciesInBundle": 19,
+    "bundleBytes": 3194159
+  },
+  {
+    "folder": "esri__calcite-components",
+    "name": "@esri/calcite-components",
+    "version": "5.1.2",
+    "ok": true,
+    "dependenciesInBundle": 6,
+    "bundleBytes": 156759
+  },
+  {
+    "folder": "firebase__messaging",
+    "name": "@firebase/messaging",
+    "version": "0.13.3",
+    "ok": true,
+    "dependenciesInBundle": 6,
+    "bundleBytes": 288932
+  },
+  {
+    "folder": "govtechsg__sgds-masthead",
+    "name": "@govtechsg/sgds-masthead",
+    "version": "0.0.20",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 186558
+  },
+  {
+    "folder": "hackler__javascript-sdk",
+    "name": "@hackler/javascript-sdk",
+    "version": "12.2.0",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 423687
+  },
+  {
+    "folder": "scandit__web-datacapture-id",
+    "name": "@scandit/web-datacapture-id",
+    "version": "8.6.1",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 692521
+  },
+  {
+    "folder": "sentry-internal__browser-utils",
+    "name": "@sentry-internal/browser-utils",
+    "version": "10.57.0",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 856747
+  },
+  {
+    "folder": "sentry-internal__feedback",
+    "name": "@sentry-internal/feedback",
+    "version": "10.57.0",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 829092
+  },
+  {
+    "folder": "sentry__core",
+    "name": "@sentry/core",
+    "version": "11.5.0",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 1021093
+  },
+  {
+    "folder": "snowplow__browser-plugin-link-click-tracking",
+    "name": "@snowplow/browser-plugin-link-click-tracking",
+    "version": "4.10.2",
+    "ok": true,
+    "dependenciesInBundle": 4,
+    "bundleBytes": 298367
+  },
+  {
+    "folder": "snowplow__browser-plugin-media",
+    "name": "@snowplow/browser-plugin-media",
+    "version": "4.10.2",
+    "ok": true,
+    "dependenciesInBundle": 4,
+    "bundleBytes": 341704
+  },
+  {
+    "folder": "snowplow__browser-plugin-web-vitals",
+    "name": "@snowplow/browser-plugin-web-vitals",
+    "version": "4.10.2",
+    "ok": true,
+    "dependenciesInBundle": 4,
+    "bundleBytes": 292245
+  },
+  {
+    "folder": "statsig__js-client",
+    "name": "@statsig/js-client",
+    "version": "3.33.5",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 212854
+  },
+  {
+    "folder": "supabase__auth-js",
+    "name": "@supabase/auth-js",
+    "version": "2.117.3",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 496081
+  },
+  {
+    "folder": "supabase__realtime-js",
+    "name": "@supabase/realtime-js",
+    "version": "2.117.3",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 174638
+  },
+  {
+    "folder": "tensorflow__tfjs",
+    "name": "@tensorflow/tfjs",
+    "version": "4.22.0",
+    "ok": true,
+    "dependenciesInBundle": 8,
+    "bundleBytes": 15623930
+  },
+  {
+    "folder": "codemirror",
+    "name": "codemirror",
+    "version": "6.0.2",
+    "ok": true,
+    "dependenciesInBundle": 14,
+    "bundleBytes": 1148251
+  },
+  {
+    "folder": "d3-time-format",
+    "name": "d3-time-format",
+    "version": "4.1.0",
+    "ok": true,
+    "dependenciesInBundle": 3,
+    "bundleBytes": 143483
+  },
+  {
+    "folder": "element-ui",
+    "name": "element-ui",
+    "version": "2.15.14",
+    "ok": true,
+    "dependenciesInBundle": 9,
+    "bundleBytes": 2422054
+  },
+  {
+    "folder": "flickity",
+    "name": "flickity",
+    "version": "3.0.0",
+    "ok": true,
+    "dependenciesInBundle": 5,
+    "bundleBytes": 95421
+  },
+  {
+    "folder": "fullcalendar-scheduler",
+    "name": "fullcalendar-scheduler",
+    "version": "7.1.1",
+    "ok": true,
+    "dependenciesInBundle": 6,
+    "bundleBytes": 1337395
+  },
+  {
+    "folder": "imagesloaded",
+    "name": "imagesloaded",
+    "version": "5.0.0",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 13938
+  },
+  {
+    "folder": "jquery.iframetracker",
+    "name": "jquery.iframetracker",
+    "version": "2.1.0",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 266246
+  },
+  {
+    "folder": "level-selector",
+    "name": "level-selector",
+    "version": "0.2.0",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 1540212
+  },
+  {
+    "folder": "nanogallery2",
+    "name": "nanogallery2",
+    "version": "3.0.5",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 884661
+  },
+  {
+    "folder": "nsfwjs",
+    "name": "nsfwjs",
+    "version": "4.4.0",
+    "ok": true,
+    "dependenciesInBundle": 12,
+    "bundleBytes": 15725411
+  },
+  {
+    "folder": "quill",
+    "name": "quill",
+    "version": "2.0.3",
+    "ok": true,
+    "dependenciesInBundle": 7,
+    "bundleBytes": 1697738
+  },
+  {
+    "folder": "react-dom",
+    "name": "react-dom",
+    "version": "19.3.0",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 28503
+  },
+  {
+    "folder": "react-router-dom",
+    "name": "react-router-dom",
+    "version": "7.18.4",
+    "ok": true,
+    "dependenciesInBundle": 5,
+    "bundleBytes": 585562
+  },
+  {
+    "folder": "scrollreveal",
+    "name": "scrollreveal",
+    "version": "4.0.9",
+    "ok": true,
+    "dependenciesInBundle": 5,
+    "bundleBytes": 56162
+  },
+  {
+    "folder": "silvermine-videojs-quality-selector",
+    "name": "silvermine-videojs-quality-selector",
+    "version": "1.1.2",
+    "ok": true,
+    "dependenciesInBundle": 2,
+    "bundleBytes": 68675
+  },
+  {
+    "folder": "slick-carousel",
+    "name": "slick-carousel",
+    "version": "2.0.0",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 350320
+  },
+  {
+    "folder": "styled-components",
+    "name": "styled-components",
+    "version": "6.5.3",
+    "ok": true,
+    "dependenciesInBundle": 4,
+    "bundleBytes": 107692
+  },
+  {
+    "folder": "suggestions-jquery",
+    "name": "suggestions-jquery",
+    "version": "22.6.0",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 422561
+  },
+  {
+    "folder": "three-mesh-bvh",
+    "name": "three-mesh-bvh",
+    "version": "0.9.15",
+    "ok": true,
+    "dependenciesInBundle": 1,
+    "bundleBytes": 2531022
+  },
+  {
+    "folder": "videojs-ima",
+    "name": "videojs-ima",
+    "version": "2.6.0",
+    "ok": true,
+    "dependenciesInBundle": 11,
+    "bundleBytes": 2479766
+  }
+]
