@@ -1,0 +1,204 @@
+services:
+  rabbitmq:
+    image: rabbitmq
+    restart: always
+    environment:
+      RABBITMQ_NODE_PORT: 5672
+    volumes:
+      - ./rabbitmq.conf:/etc/rabbitmq/rabbitmq.conf
+    logging:
+      options:
+        max-size: 1m
+        max-file: 3
+    healthcheck:
+      test: "rabbitmq-diagnostics ping && sleep 5s"
+      interval: 30s
+      timeout: 10s
+      start_period: 30s
+      start_interval: 2s
+      retries: 5
+    networks:
+      - bundles
+
+  database:
+    image: mongo:5
+    restart: always
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: root
+      MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_DATABASE: bundles
+    logging:
+      options:
+        max-size: 1m
+        max-file: 3
+    volumes:
+      - database:/data/db
+    networks:
+      - bundles
+
+  domainlist:
+    image: registry.local/domainlist
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    command: ["sh", "-c", "mv domainlist.csv domainlist-full.csv; head -n 100000 domainlist-full.csv > domainlist.csv; python domainlist.py"]
+    restart: on-failure
+    logging:
+      options:
+        max-size: 1m
+        max-file: 3
+    environment:
+      AMQP_URI: "amqp://rabbitmq"
+      PYTHON_UNBUFFERED: 1
+      QUEUE_NAME: domainlist
+      DAILY: 1
+    networks:
+      - bundles
+
+  throttle:
+    image: registry.local/throttle
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    restart: always
+    environment:
+      AMQP_URI: "amqp://rabbitmq"
+      PYTHON_UNBUFFERED: 1
+      QUEUE_NAME_IN: domainlist
+      QUEUE_NAME_OUT: domains
+      QUEUE_LENGTH_OUT: 80
+      MAX_PER_SECOND: 8
+    networks:
+      - bundles
+
+  webworker:
+    image: registry.local/bundlefetcher-stealth
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      proxy1:
+        condition: service_started
+      proxy2:
+        condition: service_started
+      proxy3:
+        condition: service_started
+      proxy4:
+        condition: service_started
+      proxy5:
+        condition: service_started
+      proxy6:
+        condition: service_started
+    restart: always
+    deploy:
+      replicas: 12
+      resources:
+        limits:
+          cpus: "1"
+          memory: 2G
+    logging:
+      options:
+        max-size: 5m
+        max-file: 3
+    environment:
+      AMQP_URI: "amqp://rabbitmq"
+      PYTHON_UNBUFFERED: 1
+      QUEUE_NAME_IN: domains
+      QUEUE_NAME_OUT: crawled_data
+      QUEUE_LENGTH_IN: 80
+      MAX_PARALLEL_COUNTER: 4
+      SOCKS: 24082  # Base port
+    networks:
+      - bundles
+    cap_add:
+      - SYS_ADMIN
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  separating-collector:
+    image: registry.local/separating-collector
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      database:
+        condition: service_started
+    restart: always
+    logging:
+      options:
+        max-size: 4m
+        max-file: 3
+    environment:
+      AMQP_URI: "amqp://rabbitmq"
+      PYTHON_UNBUFFERED: 1
+      QUEUE_NAME_IN: crawled_data
+      QUEUE_NAME_OUT: object_storage
+      MONGOHOST: database
+      MONGOUSER: root
+      MONGOPASS: password
+      MONGODB: bundles
+    networks:
+      - bundles
+
+  object-storage:
+    image: registry.local/object-storage
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    deploy:
+      replicas: 8
+    restart: always
+    environment:
+      AMQP_URI: "amqp://rabbitmq"
+      PYTHON_UNBUFFERED: 1
+      QUEUE_NAME: object_storage
+    volumes:
+      - /data/object-storage:/store  # adjust accordingly
+    networks:
+      - bundles
+
+  proxy1:
+    image: registry.local/hev-socks5-proxy
+    network_mode: host
+    environment:
+      BIND_ADDRESS: 127.0.0.1  # adjust accordingly
+      PORT: 24082
+
+  proxy2:
+    image: registry.local/hev-socks5-proxy
+    network_mode: host
+    environment:
+      BIND_ADDRESS: 127.0.0.2  # adjust accordingly
+      PORT: 24083
+
+  proxy3:
+    image: registry.local/hev-socks5-proxy
+    network_mode: host
+    environment:
+      BIND_ADDRESS: 127.0.0.3  # adjust accordingly
+      PORT: 24084
+
+  proxy4:
+    image: registry.local/hev-socks5-proxy
+    network_mode: host
+    environment:
+      BIND_ADDRESS: 127.0.0.4  # adjust accordingly
+      PORT: 24085
+
+  proxy5:
+    image: registry.local/hev-socks5-proxy
+    network_mode: host
+    environment:
+      BIND_ADDRESS: 127.0.0.5  # adjust accordingly
+      PORT: 24086
+
+  proxy6:
+    image: registry.local/hev-socks5-proxy
+    network_mode: host
+    environment:
+      BIND_ADDRESS: 127.0.0.6  # adjust accordingly
+      PORT: 24087
+
+volumes:
+  database:
+
+networks:
+  bundles: { }

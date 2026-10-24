@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Pipeline control panel</title>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #171e26; --panel2: #1e2730; --edge: #2a3542;
+    --ink: #e6edf3; --dim: #93a1b0; --accent: #2f9e8f; --accent2: #3d7fd6;
+    --ok: #3fb950; --err: #f85149; --run: #d29922; --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  header { padding: 14px 20px; border-bottom: 1px solid var(--edge); display: flex; align-items: baseline; gap: 12px; }
+  header h1 { font-size: 16px; margin: 0; font-weight: 650; }
+  header .sub { color: var(--dim); font-size: 12px; }
+  .wrap { display: grid; grid-template-columns: 380px 1fr; gap: 0; height: calc(100vh - 51px); }
+  .left { border-right: 1px solid var(--edge); overflow-y: auto; padding: 16px; }
+  .right { display: flex; flex-direction: column; overflow: hidden; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--dim); margin: 18px 0 8px; }
+  h2:first-child { margin-top: 0; }
+  .field { margin-bottom: 10px; }
+  .field label { display: block; font-size: 12px; color: var(--dim); margin-bottom: 3px; }
+  .field input[type=text], .field input[type=number], .field select {
+    width: 100%; background: var(--panel2); color: var(--ink); border: 1px solid var(--edge);
+    border-radius: 6px; padding: 6px 8px; font: inherit; }
+  .field.bool { display: flex; align-items: center; gap: 8px; }
+  .field.bool label { margin: 0; color: var(--ink); font-size: 13px; order: 2; }
+  .field.bool input { order: 1; width: 16px; height: 16px; }
+  .steps { display: flex; flex-wrap: wrap; gap: 6px; }
+  button { background: var(--panel2); color: var(--ink); border: 1px solid var(--edge);
+    border-radius: 6px; padding: 7px 11px; font: inherit; cursor: pointer; }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #04120f; font-weight: 600; }
+  button.step { font-size: 12px; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .tabs { display: flex; gap: 2px; padding: 8px 12px 0; border-bottom: 1px solid var(--edge); }
+  .tab { background: none; border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; color: var(--dim); }
+  .tab.active { background: var(--panel); color: var(--ink); border-color: var(--edge); }
+  .pane { flex: 1; display: none; flex-direction: column; overflow: hidden; }
+  .pane.active { display: flex; }
+  .logbar { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--edge); }
+  .badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; border: 1px solid var(--edge); color: var(--dim); }
+  .badge.running { color: var(--run); border-color: var(--run); }
+  .badge.done { color: var(--ok); border-color: var(--ok); }
+  .badge.error { color: var(--err); border-color: var(--err); }
+  .log { flex: 1; overflow-y: auto; padding: 10px 14px; margin: 0;
+    font-family: var(--mono); font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
+  .log .err { color: var(--err); }
+  .log .meta { color: var(--accent2); }
+  .console-in { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--edge); }
+  .console-in input { flex: 1; background: #0b0f14; color: var(--ink); border: 1px solid var(--edge);
+    border-radius: 6px; padding: 8px 10px; font-family: var(--mono); }
+  .outs { flex: 1; overflow-y: auto; padding: 8px 14px; font-family: var(--mono); font-size: 12px; }
+  .outs div { padding: 2px 0; color: var(--dim); display: flex; justify-content: space-between; gap: 16px; }
+  .outs div span:first-child { color: var(--ink); }
+  .hint { color: var(--dim); font-size: 11px; margin-top: 6px; }
+  .row { display: flex; gap: 8px; align-items: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Reference pipeline control panel</h1>
+  <span class="sub" id="cwd"></span>
+</header>
+<div class="wrap">
+  <div class="left">
+    <h2>Parameters</h2>
+    <div id="params"></div>
+    <h2>Run</h2>
+    <div class="field"><button class="primary" id="run-all" style="width:100%">Run whole pipeline (01 → 06)</button></div>
+    <div class="steps" id="steps"></div>
+    <p class="hint">The scripts also run on their own: <code>./run-pipeline.sh</code> or <code>node wizard.mjs</code>.</p>
+  </div>
+  <div class="right">
+    <div class="tabs">
+      <button class="tab active" data-pane="logs">Logs</button>
+      <button class="tab" data-pane="console">Console</button>
+      <button class="tab" data-pane="outputs">Outputs</button>
+    </div>
+
+    <div class="pane active" id="pane-logs">
+      <div class="logbar">
+        <span id="job-label" class="sub" style="color:var(--dim)">idle</span>
+        <span class="badge" id="job-badge">—</span>
+        <span style="flex:1"></span>
+        <button id="stop" disabled>Stop</button>
+        <button id="clear-log">Clear</button>
+      </div>
+      <pre class="log" id="log"></pre>
+    </div>
+
+    <div class="pane" id="pane-console">
+      <div class="logbar">
+        <span class="sub" style="color:var(--dim)">Runs <code>bash -lc &lt;command&gt;</code> in the scripts folder · localhost only</span>
+        <span style="flex:1"></span>
+        <button id="clear-con">Clear</button>
+      </div>
+      <pre class="log" id="con"></pre>
+      <div class="console-in">
+        <input id="cmd" placeholder="e.g.  ls output/03_bundles_minified   ·   cat output/logs/02_download_packages.log   ·   node 04-select-sample40.mjs --help" autocomplete="off" />
+        <button class="primary" id="cmd-run">Run</button>
+      </div>
+    </div>
+
+    <div class="pane" id="pane-outputs">
+      <div class="logbar">
+        <span class="sub" style="color:var(--dim)">Files produced under ./output</span>
+        <span style="flex:1"></span>
+        <button id="refresh-out">Refresh</button>
+      </div>
+      <div class="outs" id="outs"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+let CFG = null;
+
+function paramValues() {
+  const v = {};
+  for (const p of CFG.params) {
+    const el = document.getElementById("p-" + p.key);
+    if (!el) continue;
+    v[p.key] = p.type === "bool" ? (el.checked ? "1" : "0") : el.value;
+  }
+  return v;
+}
+
+function renderParams() {
+  const box = $("#params");
+  box.innerHTML = "";
+  for (const p of CFG.params) {
+    const wrap = document.createElement("div");
+    wrap.className = "field" + (p.type === "bool" ? " bool" : "");
+    const id = "p-" + p.key;
+    if (p.type === "bool") {
+      wrap.innerHTML = `<input type="checkbox" id="${id}" ${p.default === "1" ? "checked" : ""}/><label for="${id}">${p.label}</label>`;
+    } else if (p.type === "select") {
+      wrap.innerHTML = `<label for="${id}">${p.label}</label><select id="${id}">` +
+        p.options.map((o) => `<option ${o === p.default ? "selected" : ""}>${o}</option>`).join("") + `</select>`;
+    } else {
+      const t = p.type === "number" ? "number" : "text";
+      wrap.innerHTML = `<label for="${id}">${p.label}</label><input type="${t}" id="${id}" value="${p.default}"/>`;
+    }
+    box.appendChild(wrap);
+  }
+}
+
+function renderSteps() {
+  const box = $("#steps");
+  box.innerHTML = "";
+  for (const s of CFG.steps) {
+    if (s.id === "all") continue;
+    const b = document.createElement("button");
+    b.className = "step";
+    b.textContent = s.label;
+    b.onclick = () => run(s.id);
+    box.appendChild(b);
+  }
+}
+
+// ---- streaming a job into a <pre> ----
+function streamJob(jobId, logEl, { onStatus } = {}) {
+  const es = new EventSource("/api/stream?job=" + jobId);
+  es.onmessage = (ev) => {
+    const e = JSON.parse(ev.data);
+    if (e.type === "line") {
+      const span = document.createElement("span");
+      span.className = e.stream === "err" ? "err" : e.stream === "meta" ? "meta" : "";
+      span.textContent = e.text + "\n";
+      logEl.appendChild(span);
+      logEl.scrollTop = logEl.scrollHeight;
+    } else if (e.type === "status") {
+      onStatus && onStatus(e);
+      if (e.status !== "running") es.close();
+    }
+  };
+  es.onerror = () => es.close();
+  return es;
+}
+
+let currentJob = null;
+async function run(step) {
+  const log = $("#log");
+  log.textContent = "";
+  $("#job-label").textContent = CFG.steps.find((s) => s.id === step)?.label ?? step;
+  setBadge("running");
+  $("#stop").disabled = false;
+  const r = await fetch("/api/run", { method: "POST", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ step, params: paramValues() }) }).then((x) => x.json());
+  if (r.error) { setBadge("error"); log.textContent = r.error; return; }
+  currentJob = r.jobId;
+  streamJob(r.jobId, log, { onStatus: (e) => {
+    setBadge(e.status);
+    if (e.status !== "running") { $("#stop").disabled = true; refreshOutputs(); }
+  }});
+}
+
+function setBadge(status) {
+  const b = $("#job-badge");
+  b.className = "badge " + status;
+  b.textContent = status;
+}
+
+$("#run-all").onclick = () => run("all");
+$("#stop").onclick = () => currentJob && fetch("/api/stop", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jobId: currentJob }) });
+$("#clear-log").onclick = () => ($("#log").textContent = "");
+
+// ---- console ----
+function runConsole() {
+  const input = $("#cmd");
+  const command = input.value.trim();
+  if (!command) return;
+  const con = $("#con");
+  const head = document.createElement("span");
+  head.className = "meta";
+  head.textContent = "\n$ " + command + "\n";
+  con.appendChild(head);
+  con.scrollTop = con.scrollHeight;
+  input.value = "";
+  fetch("/api/exec", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ command }) })
+    .then((x) => x.json())
+    .then((r) => { if (r.error) { con.innerHTML += `<span class="err">${r.error}\n</span>`; return; } streamJob(r.jobId, con); });
+}
+$("#cmd-run").onclick = runConsole;
+$("#cmd").addEventListener("keydown", (e) => { if (e.key === "Enter") runConsole(); });
+$("#clear-con").onclick = () => ($("#con").textContent = "");
+
+// ---- outputs ----
+async function refreshOutputs() {
+  const rows = await fetch("/api/outputs?outDir=" + encodeURIComponent(paramValues().outDir ?? "")).then((x) => x.json());
+  const box = $("#outs");
+  if (!rows.length) { box.innerHTML = '<div><span>No output yet — run a step.</span></div>'; return; }
+  box.innerHTML = rows.map((r) => `<div><span>${r.path}</span><span>${fmtBytes(r.bytes)}</span></div>`).join("");
+}
+function fmtBytes(n) {
+  if (n < 1024) return n + " B";
+  if (n < 1048576) return (n / 1024).toFixed(1) + " KB";
+  return (n / 1048576).toFixed(1) + " MB";
+}
+$("#refresh-out").onclick = refreshOutputs;
+
+// ---- tabs ----
+document.querySelectorAll(".tab").forEach((t) => {
+  t.onclick = () => {
+    document.querySelectorAll(".tab").forEach((x) => x.classList.remove("active"));
+    document.querySelectorAll(".pane").forEach((x) => x.classList.remove("active"));
+    t.classList.add("active");
+    $("#pane-" + t.dataset.pane).classList.add("active");
+    if (t.dataset.pane === "outputs") refreshOutputs();
+  };
+});
+
+// ---- boot ----
+fetch("/api/config").then((x) => x.json()).then((cfg) => {
+  CFG = cfg;
+  $("#cwd").textContent = cfg.cwd;
+  if (cfg.title) { $("#title").textContent = cfg.title; document.title = cfg.title; }
+  renderParams();
+  renderSteps();
+});
+</script>
+</body>
+</html>

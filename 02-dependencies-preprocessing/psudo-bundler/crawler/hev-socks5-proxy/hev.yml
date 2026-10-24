@@ -1,0 +1,9 @@
+main:
+  workers: 4
+  port: __PORT__
+  listen-address: '0.0.0.0'
+  udp-port: __PORT__
+  listen-ipv6-only: false
+  bind-address: '__BIND_ADDRESS__'
+  domain-address-type: unspec
+  mark: 0

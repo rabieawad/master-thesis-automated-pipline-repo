@@ -1,0 +1,3 @@
+aiohttp~=3.10.10
+pipeline-helper~=0.3.0
+
