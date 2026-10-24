@@ -1,2 +1,0 @@
-pymongo~=4.10.1
-pipeline-helper~=0.3.0
