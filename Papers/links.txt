@@ -1,0 +1,17 @@
+I can't save PDFs into this chat's file area, because the sandbox can only reach a short list of sites and none of them host these papers. What I can do is find freely available copies and give you the links, so I'll search for each paper now.I couldn't save the PDFs into this chat. The sandbox can't reach the publishers' sites, and the file area only holds files I create. Instead, here are links to free copies I found, with the full titles from your bibliography. On the arXiv pages, click "View PDF".
+
+- **Gemini** (CCS 2017): posted on arXiv, https://arxiv.org/abs/1708.06525
+- **Asm2Vec** (IEEE S&P 2019): a PDF is hosted by the authors' McGill lab, https://dmas.lab.mcgill.ca/fung/pub/DFC19sp.pdf
+- **How Machine Learning Is Solving the Binary Function Similarity Problem** (USENIX Security 2022): this is the link from your bibliography, https://www.usenix.org/conference/usenixsecurity22/presentation/marcelli. I didn't open it, but USENIX papers are normally open access.
+- **LibDB** (MSR 2022): on arXiv, https://arxiv.org/abs/2204.10232. The authors' code is at https://github.com/DeepSoftwareAnalytics/LibDB.
+- **BinaryAI** (ICSE 2024): on arXiv, https://arxiv.org/abs/2401.11161
+- **OSSPolice** (CCS 2017): an author-hosted copy at Waterloo, https://cs.uwaterloo.ca/~m285xu/assets/publication/osspolice-paper.pdf. There is also a Georgia Tech copy at https://www.cc.gatech.edu/~rduan9/publications/osspolice.pdf.
+- **ModX** (ICSE 2022): on arXiv, https://arxiv.org/abs/2204.08237
+- **BinCoFer** (JSS 2025): on arXiv, https://arxiv.org/abs/2504.19551
+- **LibAM** (TOSEM 2024): on arXiv, https://arxiv.org/abs/2305.04026
+
+Two I couldn't find a free copy of:
+- **DeeperBin** (ASE 2025): I only found the conference page with the abstract, https://conf.researchr.org/details/ase-2025/ase-2025-papers/68/Demystifying-Cross-Language-C-C-Binaries-A-Robust-Software-Component-Analysis-Appr. Check the authors' pages or your university library.
+- **B2SFinder** (ASE 2019): my search turned up nothing I could use. Your library or the authors' pages may have it.
+
+I didn't search for B2SMatcher or ATVHunter, since they weren't in the excerpt. I can look those up too.
