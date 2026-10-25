@@ -38,10 +38,10 @@
 // Safe to stop and re-run: packages that already have an SBOM are skipped.
 // Bundling only reads the downloaded files - it never runs their code.
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, rmSync } from "node:fs";
 import { join, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { totalmem } from "node:os";
 
@@ -329,26 +329,48 @@ function buildSbom(name, rootVersion, modules) {
 }
 
 // ---------- main ----------
-const folders = readdirSync(packagesDir).filter((d) => {
-  const p = join(packagesDir, d);
-  return !d.startsWith(".") && statSync(p).isDirectory() && existsSync(join(p, "package.json"));
-});
+// Packages are stored as <folder>.tgz (one file each) with a <folder>.meta.json sidecar
+// holding {name, version}. Legacy extracted folders with a package.json are still accepted.
+const folders = [];
+for (const d of readdirSync(packagesDir)) {
+  if (d.startsWith(".") || d === "download-results.json" || d.endsWith(".meta.json")) continue;
+  if (d.endsWith(".tgz")) folders.push(d.slice(0, -4));
+  else { try { if (statSync(join(packagesDir, d)).isDirectory() && existsSync(join(packagesDir, d, "package.json"))) folders.push(d); } catch {} }
+}
+
+// name/version WITHOUT extracting: from the meta sidecar, else from a legacy folder.
+function metaFor(folder) {
+  try { const m = readJson(join(packagesDir, `${folder}.meta.json`)); if (m && m.name) return m; } catch {}
+  try {
+    const pkgDir = join(packagesDir, folder);
+    const name = Object.keys(readJson(join(pkgDir, "package.json")).dependencies ?? {})[0];
+    let version = "unknown";
+    try { version = readJson(join(pkgDir, "node_modules", ...name.split("/"), "package.json")).version; } catch {}
+    return { name, version };
+  } catch { return {}; }
+}
+// Give a usable package directory: extract the .tgz to a temp dir (cleaned up after), or
+// use the legacy folder as-is.
+function materialize(folder) {
+  const tgz = join(packagesDir, `${folder}.tgz`);
+  if (existsSync(tgz)) {
+    const tmp = join(packagesDir, `.x-${process.pid}-${Math.random().toString(36).slice(2)}`);
+    mkdirSync(tmp, { recursive: true });
+    execFileSync("tar", ["-xzf", tgz, "-C", tmp], { stdio: "ignore" }); // tgz made with `-C dir .`
+    return { dir: tmp, cleanup: () => rmSync(tmp, { recursive: true, force: true }) };
+  }
+  return { dir: join(packagesDir, folder), cleanup: () => {} };
+}
 
 async function process_(folder) {
-  const pkgDir = join(packagesDir, folder);
-  let name;
-  try {
-    name = Object.keys(readJson(join(pkgDir, "package.json")).dependencies ?? {})[0];
-  } catch {}
-  if (!name) return { folder, ok: false, error: "no dependency found in package.json (not downloaded?)" };
+  const meta = metaFor(folder);
+  const name = meta.name;
+  if (!name) return { folder, ok: false, error: "no package metadata found (not downloaded?)" };
   if (onlySet) {
     if (!onlySet.has(folder) && !onlySet.has(name.replace("/", "+"))) return null;
   } else if (ONLY && ONLY !== name && ONLY !== folder) return null;
 
-  let rootVersion = "unknown";
-  try {
-    rootVersion = readJson(join(pkgDir, "node_modules", ...name.split("/"), "package.json")).version;
-  } catch {}
+  const rootVersion = meta.version ?? "unknown";
 
   const key = bundleKey(name, rootVersion);
   const id = `${name}@${rootVersion}`;
@@ -385,32 +407,33 @@ async function process_(folder) {
     };
   }
 
-  const r = await bundleOne(pkgDir, name, bundlesDir, filename);
-  if (!r.ok) return { id, folder, name, version: rootVersion, ok: false, error: r.error };
+  const mat = materialize(folder); // extract the .tgz to a temp dir just for bundling
+  try {
+    const r = await bundleOne(mat.dir, name, bundlesDir, filename);
+    if (!r.ok) return { id, folder, name, version: rootVersion, ok: false, error: r.error };
 
-  const { sbom, modulesReport, componentCount } = buildSbom(name, rootVersion, r.modules);
-  writeFileSync(sbomFile, JSON.stringify(sbom, null, 2));
-  writeFileSync(modulesFile, JSON.stringify(modulesReport, null, 2));
-  let bytes = 0;
-  let mapBytes = 0;
-  try {
-    bytes = statSync(join(bundlesDir, filename)).size;
-  } catch {}
-  try {
-    mapBytes = statSync(join(bundlesDir, `${filename}.map`)).size;
-  } catch {}
-  return {
-    id,
-    folder,
-    name,
-    version: rootVersion,
-    ok: true,
-    dependenciesInBundle: componentCount,
-    bundleBytes: bytes,
-    sourceMapBytes: mapBytes,
-    outFile: join(bundlesDir, filename),
-    sourceMapFile: mapBytes ? join(bundlesDir, `${filename}.map`) : undefined,
-  };
+    const { sbom, modulesReport, componentCount } = buildSbom(name, rootVersion, r.modules);
+    writeFileSync(sbomFile, JSON.stringify(sbom, null, 2));
+    writeFileSync(modulesFile, JSON.stringify(modulesReport, null, 2));
+    let bytes = 0;
+    let mapBytes = 0;
+    try { bytes = statSync(join(bundlesDir, filename)).size; } catch {}
+    try { mapBytes = statSync(join(bundlesDir, `${filename}.map`)).size; } catch {}
+    return {
+      id,
+      folder,
+      name,
+      version: rootVersion,
+      ok: true,
+      dependenciesInBundle: componentCount,
+      bundleBytes: bytes,
+      sourceMapBytes: mapBytes,
+      outFile: join(bundlesDir, filename),
+      sourceMapFile: mapBytes ? join(bundlesDir, `${filename}.map`) : undefined,
+    };
+  } finally {
+    mat.cleanup();
+  }
 }
 
 // ---------- one separate process per package ----------
@@ -425,19 +448,13 @@ if (process.env.BUNDLE_CHILD) {
 
 // true when this folder still has to be bundled (not filtered out, not done in an earlier run)
 function needsBundling(folder) {
-  const pkgDir = join(packagesDir, folder);
-  let name;
-  try {
-    name = Object.keys(readJson(join(pkgDir, "package.json")).dependencies ?? {})[0];
-  } catch {}
+  const meta = metaFor(folder); // no extraction — reads the meta sidecar
+  const name = meta.name;
   if (!name) return false;
   if (onlySet) {
     if (!onlySet.has(folder) && !onlySet.has(name.replace("/", "+"))) return false;
   } else if (ONLY && ONLY !== name && ONLY !== folder) return false;
-  let version = "unknown";
-  try {
-    version = readJson(join(pkgDir, "node_modules", ...name.split("/"), "package.json")).version;
-  } catch {}
+  const version = meta.version ?? "unknown";
   return !existsSync(join(sbomDir, `${bundleKey(name, version)}.cdx.json`));
 }
 

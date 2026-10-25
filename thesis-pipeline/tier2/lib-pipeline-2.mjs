@@ -11,7 +11,11 @@ export const HERE = dirname(fileURLToPath(import.meta.url));
 
 export const PARAMS = [
   { key: "INPUT_DIR", label: "First pipeline's output folder (its 04_/05_ folders live here)", type: "text", default: "" },
-  { key: "VERSIONS", label: "Which versions to download per package (all = every major/minor/patch, paper-style)", type: "select", options: ["all", "minor", "latest", "exact"], default: "all" },
+  { key: "VERSIONS", label: "Which versions to download per package (all = every major/minor/patch; sample = cap big histories)", type: "select", options: ["all", "sample", "minor", "latest", "exact"], default: "all" },
+  { key: "SAMPLE_THRESHOLD", label: "VERSIONS=sample: take all if a package has ≤ this many versions, else sample", type: "number", default: "50" },
+  { key: "ADJACENT_N", label: "VERSIONS=sample: neighbours of the observed version to always keep", type: "number", default: "4" },
+  { key: "PER_MINOR_N", label: "VERSIONS=sample: patches taken per major.minor group (lower = caps harder)", type: "number", default: "4" },
+  { key: "SEED", label: "VERSIONS=sample: random seed (reproducible sampling)", type: "number", default: "42" },
   { key: "INCLUDE_PACKAGE", label: "Include the packages themselves (not just their dependencies)", type: "bool", default: "1" },
   { key: "CONC", label: "Parallel registry queries / downloads (steps 01-02)", type: "number", default: "6" },
   { key: "BUNDLE_CONC", label: "Packages pseudo-bundled at once (step 03)", type: "number", default: "4" },
@@ -52,6 +56,7 @@ export function buildCommand(step, p) {
         cmd: "bash", args: [join(HERE, "run-pipeline-2.sh")], cwd: HERE,
         env: {
           INPUT_DIR: p.INPUT_DIR, VERSIONS: p.VERSIONS, INCLUDE_PACKAGE: p.INCLUDE_PACKAGE,
+          SAMPLE_THRESHOLD: p.SAMPLE_THRESHOLD, ADJACENT_N: p.ADJACENT_N, PER_MINOR_N: p.PER_MINOR_N, SEED: p.SEED,
           CONC: p.CONC, BUNDLE_CONC: p.BUNDLE_CONC, MINIFY: p.MINIFY, MIN_LOC: p.MIN_LOC,
         },
       };
@@ -59,6 +64,10 @@ export function buildCommand(step, p) {
       return { cmd: "npm", args: ["install", "--no-save", "--no-audit", "--no-fund", "@swc/core", "acorn", "acorn-loose", "acorn-walk", "astring", "meriyah@6.0.6", "escodegen@2.1.0"], cwd: HERE, env: {} };
     case "01": {
       const a = [join(HERE, "01_build-list.mjs"), p.INPUT_DIR || ".", d.D1, "--versions", p.VERSIONS, "--conc", p.CONC];
+      if (p.SAMPLE_THRESHOLD != null) a.push("--sample-threshold", p.SAMPLE_THRESHOLD);
+      if (p.ADJACENT_N != null) a.push("--adjacent-n", p.ADJACENT_N);
+      if (p.PER_MINOR_N != null) a.push("--per-minor-n", p.PER_MINOR_N);
+      if (p.SEED != null) a.push("--seed", p.SEED);
       if (String(p.INCLUDE_PACKAGE) === "0") a.push("--no-package");
       return { cmd: node, args: a, cwd: HERE, env: {} };
     }

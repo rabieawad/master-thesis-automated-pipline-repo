@@ -26,7 +26,29 @@ projects/<name-slug>/
   tier2/logs/01.log …04.log
 ```
 
-Per tier you can **Run whole tier**, **Continue** (from the first unfinished step), or run **a single step**. State (status / started / duration / exit code) and per-step logs are saved, written atomically, and survive a server restart (a step left mid-run is marked interrupted; Continue resumes).
+Per tier you can **Run whole tier**, **Continue** (from the first unfinished step), run **a single step**, or **Run up to step N** (runs from the first unfinished step up to and including N, then stops). State (status / started / duration / exit code) and per-step logs are saved, written atomically, and survive a server restart (a step left mid-run is marked interrupted; Continue resumes).
+
+## Storage: downloads are always tarred
+
+Every downloaded package is stored as **one `.tgz` file**, never an unpacked folder, so the
+filesystem tracks one file per package instead of a whole tree of tiny files (which is what
+was overwhelming the volume — inodes, slack space, slow listings).
+- Tier 2: `npm pack` already produces a `.tgz`; it is kept as-is.
+- Tier 1: the installed tree (package + dependencies) is tarred into `<pkg>.tgz` with a small
+  `<pkg>.meta.json` sidecar, and the tree is removed.
+- Bundling (both tiers) **extracts a package to a temp dir only while bundling it, then deletes
+  the temp dir** — so disk only ever holds the `.tgz` files.
+
+## Tier-2 version selection (`VERSIONS`)
+
+- `all` — every stable version (all majors/minors/patches), the paper's full index.
+- `sample` — **cap big histories.** Packages with ≤ `SAMPLE_THRESHOLD` (default 50) versions are
+  taken whole; above that, a **seeded** strategy keeps the observed version + `ADJACENT_N` (4)
+  nearest neighbours, then takes `PER_MINOR_N` (4) patches from **each** major.minor group,
+  choosing per group 50/50 between random patches and a contiguous window. Lower `PER_MINOR_N`
+  caps harder (e.g. `@popperjs/core`: 54 → 46 at N=4, → 15 at N=1). Reproducible via `SEED`.
+  The strategy is pluggable (`--sample-strategy`, currently `minor-adjacent`).
+- `minor` / `latest` / `exact` — same-minor patches / newest only / exact recorded version.
 
 ## UI
 

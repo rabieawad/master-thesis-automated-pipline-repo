@@ -102,6 +102,10 @@
       <div class="actions">
         <button class="go small" id="run-all">▶ Run whole tier</button>
         <button class="primary small" id="run-continue">⏵ Continue</button>
+        <span style="display:inline-flex;gap:6px;align-items:center;">
+          <button class="small" id="run-upto">⏭ Run up to</button>
+          <select id="upto-sel" style="width:auto"></select>
+        </span>
         <button class="small" id="run-setup">Setup deps</button>
         <button class="small" id="stop" disabled>Stop</button>
         <button class="small" id="edit-params">Edit parameters</button>
@@ -231,6 +235,7 @@ async function renderProject(){ const pr=await fetch("/api/project?slug="+PROJ).
   }
   body.querySelectorAll(".step-run").forEach(b=>b.onclick=()=>{switchPane("logs");run(b.dataset.step);});
   body.querySelectorAll("[data-log]").forEach(b=>b.onclick=()=>viewLog(b.dataset.log));
+  const upsel=$("#upto-sel"); upsel.innerHTML=T.stepIds.map(s=>`<option value="${s}">step ${s}</option>`).join(""); upsel.value=T.stepIds[T.stepIds.length-1];
   // hint
   if(TIER==="tier2"){ const t1done=CFG.tiers.tier1.stepIds.every(s=>["done","imported"].includes(pr.tier1.steps[s]?.status));
     $("#tier-hint").innerHTML = `Input is wired automatically to tier 1's output — no directory needed. `+(t1done?'<span style="color:var(--ok)">Tier 1 is complete.</span>':'<span style="color:var(--run)">Tier 1 is not finished yet; run or import it first.</span>'); }
@@ -238,11 +243,12 @@ async function renderProject(){ const pr=await fetch("/api/project?slug="+PROJ).
   $("#out-path").textContent = "Files under this tier's output folder";
   const busy=T.stepIds.some(s=>steps[s]?.status==="running"); setBusy(busy);
 }
-function setBusy(b){ $("#stop").disabled=!b; ["run-all","run-continue","run-setup"].forEach(i=>$("#"+i).disabled=b); document.querySelectorAll(".step-run").forEach(x=>x.disabled=b); }
+function setBusy(b){ $("#stop").disabled=!b; ["run-all","run-continue","run-setup","run-upto"].forEach(i=>$("#"+i).disabled=b); document.querySelectorAll(".step-run").forEach(x=>x.disabled=b); }
 
 async function run(step){ await fetch("/api/project/run",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({slug:PROJ,tier:TIER,step})}); }
 $("#run-all").onclick=()=>{switchPane("logs");run("all");};
 $("#run-continue").onclick=()=>{switchPane("logs");run("continue");};
+$("#run-upto").onclick=()=>{switchPane("logs");run("upto:"+$("#upto-sel").value);};
 $("#run-setup").onclick=()=>{switchPane("logs");run("setup");};
 $("#stop").onclick=()=>fetch("/api/project/stop",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({slug:PROJ,tier:TIER})});
 $("#rename").onclick=async()=>{const n=prompt("Rename project:",$("#proj-name").textContent);if(n){await fetch("/api/project/rename",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({slug:PROJ,name:n})});renderProject();refreshProjects();}};

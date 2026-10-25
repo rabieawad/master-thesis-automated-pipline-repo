@@ -36,7 +36,8 @@ const npmBin = isWin ? "npm.cmd" : "npm";
 
 const args = process.argv.slice(2);
 const opt = (name, fb) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : fb; };
-const positional = args.filter((a, i) => !a.startsWith("--") && args[i - 1] !== "--versions" && args[i - 1] !== "--patch-level" && args[i - 1] !== "--conc");
+const VALUE_FLAGS = ["--versions", "--patch-level", "--conc", "--sample-threshold", "--adjacent-n", "--per-minor-n", "--seed", "--sample-strategy"];
+const positional = args.filter((a, i) => !a.startsWith("--") && !VALUE_FLAGS.includes(args[i - 1]));
 
 const INPUT = resolve(positional[0] ?? ".");
 const outDir = resolve(positional[1] ?? "reference-list");
@@ -45,12 +46,22 @@ const outDir = resolve(positional[1] ?? "reference-list");
 //   minor  only patches within the recorded version's major.minor
 //   latest only the single newest stable version
 //   exact  only the exact recorded version
+//   sample cap huge histories: packages with <= --sample-threshold versions are taken whole;
+//          above it, a seeded strategy keeps the observed version + --adjacent-n neighbours and
+//          --per-minor-n patches per major.minor group (50/50 random vs contiguous). Strategy is
+//          pluggable via --sample-strategy (default "minor-adjacent").
 // --patch-level / PATCH_LEVEL stay as backward-compatible aliases for --versions / VERSIONS.
 const VERSIONS = (opt("--versions", opt("--patch-level", process.env.VERSIONS ?? process.env.PATCH_LEVEL)) ?? "all").toLowerCase();
 const CONC = Number(opt("--conc", process.env.CONC) ?? 5);
 const INCLUDE_PACKAGE = !args.includes("--no-package") && process.env.INCLUDE_PACKAGE !== "0";
+// --- sampling (only used when VERSIONS=sample) ---
+const SAMPLE_THRESHOLD = Number(opt("--sample-threshold", process.env.SAMPLE_THRESHOLD) ?? 50); // <= this many versions -> take all
+const ADJACENT_N = Number(opt("--adjacent-n", process.env.ADJACENT_N) ?? 4);                   // neighbours of the observed version to always keep
+const PER_MINOR_N = Number(opt("--per-minor-n", process.env.PER_MINOR_N) ?? 4);                // patches taken per major.minor group
+const SEED = Number(opt("--seed", process.env.SEED) ?? 42);                                    // reproducible sampling
+const SAMPLE_STRATEGY = (opt("--sample-strategy", process.env.SAMPLE_STRATEGY) ?? "minor-adjacent").toLowerCase();
 
-if (!["all", "minor", "latest", "exact"].includes(VERSIONS)) { console.error(`--versions must be all|minor|latest|exact`); process.exit(1); }
+if (!["all", "minor", "latest", "exact", "sample"].includes(VERSIONS)) { console.error(`--versions must be all|minor|latest|exact|sample`); process.exit(1); }
 mkdirSync(outDir, { recursive: true });
 
 function findFile(...c) { for (const x of c) if (existsSync(x)) return x; return null; }
@@ -90,6 +101,54 @@ const isStable = (v) => !v.includes("-");
 const versionsCache = new Map();
 let registryFailures = [];
 
+// ---- seeded RNG (reproducible sampling) ----
+function mulberry32(a) { return function () { a |= 0; a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+function hashStr(s) { let h = 2166136261 >>> 0; for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); } return h >>> 0; }
+
+// Strategy registry (extensible — add more strategies here later).
+const SAMPLE_STRATEGIES = {
+  // "minor-adjacent": keep the observed version + ADJACENT_N nearest neighbours, then from
+  // each major.minor group take up to PER_MINOR_N patches, choosing per group (50/50, seeded)
+  // between random patches and a contiguous (adjacent) window.
+  "minor-adjacent"(stable, observedV, rng) {
+    const chosen = new Set();
+    const idxOf = new Map(stable.map((s, i) => [s.v, i]));
+
+    // 1) observed + its N nearest neighbours in the full sorted list (clamped at the ends)
+    if (idxOf.has(observedV)) {
+      const oi = idxOf.get(observedV);
+      chosen.add(stable[oi].v);
+      let left = oi - 1, right = oi + 1, added = 0;
+      while (added < ADJACENT_N && (left >= 0 || right < stable.length)) {
+        if (left >= 0) { chosen.add(stable[left--].v); if (++added >= ADJACENT_N) break; }
+        if (right < stable.length) { chosen.add(stable[right++].v); added++; }
+      }
+    } else {
+      chosen.add(observedV); // keep the recorded version even if not in the stable list
+    }
+
+    // 2) per major.minor group: up to PER_MINOR_N patches, 50/50 random vs adjacent
+    const groups = new Map();
+    for (const s of stable) { const k = s.p.major + "." + s.p.minor; if (!groups.has(k)) groups.set(k, []); groups.get(k).push(s); }
+    const sortedGroups = [...groups.values()].sort((a, b) => a[0].p.major - b[0].p.major || a[0].p.minor - b[0].p.minor);
+    for (const g of sortedGroups) {
+      const K = Math.min(PER_MINOR_N, g.length);
+      if (rng() < 0.5) {
+        // random K within this minor
+        const idx = g.map((_, i) => i);
+        for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
+        for (let i = 0; i < K; i++) chosen.add(g[idx[i]].v);
+      } else {
+        // adjacent K around a random centre, clamped to fit
+        const centre = Math.floor(rng() * g.length);
+        const start = Math.max(0, Math.min(centre - Math.floor(K / 2), g.length - K));
+        for (let i = 0; i < K; i++) chosen.add(g[start + i].v);
+      }
+    }
+    return chosen;
+  },
+};
+
 async function allVersions(name) {
   if (versionsCache.has(name)) return versionsCache.get(name);
   for (let attempt = 1; attempt <= 3; attempt++) {
@@ -119,6 +178,16 @@ async function selectVersions(name, version) {
     pick = stable;                                        // every major.minor.patch
   } else if (VERSIONS === "latest") {
     pick = [stable.reduce((m, x) => (cmpVer(x.p, m.p) > 0 ? x : m))];
+  } else if (VERSIONS === "sample") {
+    if (stable.length <= SAMPLE_THRESHOLD) {
+      pick = stable;                                      // few enough versions -> take all
+    } else {
+      const strat = SAMPLE_STRATEGIES[SAMPLE_STRATEGY] ?? SAMPLE_STRATEGIES["minor-adjacent"];
+      const rng = mulberry32((SEED >>> 0) ^ hashStr(name)); // per-package, reproducible
+      const chosen = strat(stable, version, rng);         // Set<versionString>
+      pick = stable.filter((s) => chosen.has(s.v));
+      if (!pick.some((s) => s.v === version)) pick.push({ v: version, p: parseVer(version) }); // observed always in
+    }
   } else { // minor: only patches within the recorded version's major.minor
     const t = parseVer(version);
     pick = stable.filter(({ p }) => p.major === t.major && p.minor === t.minor);

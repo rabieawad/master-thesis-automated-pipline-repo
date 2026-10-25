@@ -1,21 +1,23 @@
 // Reference pipeline, step 02: download each reference package at its exact version.
 //
 // Uses `npm pack name@version`, which fetches ONLY that one package's tarball from
-// the npm registry (no dependency tree — the pseudo-bundler only needs the package's
-// own code), and extracts it so each package root sits directly in its own folder:
-//   packages/<name>@<version>/package.json, dist/..., etc.
+// the npm registry (no dependency tree). The tarball is KEPT AS A SINGLE .tgz FILE —
+// it is NOT extracted — so each package is one file on disk instead of a folder of
+// many tiny files (this is the "always tar downloaded packages" rule). Step 03
+// extracts each tarball to a temp dir just long enough to pseudo-bundle it.
+//
+//   packages/<name>@<version>.tgz
 //
 // Usage:
 //   node 02_download.mjs [reference-packages.json=reference-list/reference-packages.json] \
 //        [outDir=packages] [concurrency=6]
 //
-// Safe to stop and re-run: a folder with a .pack-ok marker is skipped; failures retry.
+// Safe to stop and re-run: a package whose .tgz already exists is skipped; failures retry.
 
-import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, readdirSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync, rmSync, renameSync, readdirSync } from "node:fs";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { join, resolve } from "node:path";
-import { tmpdir } from "node:os";
 
 const run = promisify(execFile);
 const isWin = process.platform === "win32";
@@ -29,27 +31,21 @@ if (!existsSync(listPath)) { console.error(`Reference list not found: ${listPath
 const pkgs = JSON.parse(readFileSync(listPath, "utf8"));
 mkdirSync(outDir, { recursive: true });
 
-const folderName = (name, version) => `${name.replace("/", "+")}@${version}`;
-const DONE = ".pack-ok";
+const tgzName = (name, version) => `${name.replace("/", "+")}@${version}.tgz`;
 
 async function download({ name, version }) {
-  const folder = folderName(name, version);
-  const dir = join(outDir, folder);
-  if (existsSync(join(dir, DONE))) return { name, version, ok: true, skipped: true };
+  const tgzPath = join(outDir, tgzName(name, version));
+  if (existsSync(tgzPath)) return { name, version, ok: true, skipped: true };
 
   for (let attempt = 1; attempt <= 3; attempt++) {
-    const tmp = join(tmpdir(), `refpack-${process.pid}-${Math.random().toString(36).slice(2)}`);
+    // pack into a temp subdir of outDir (same filesystem, so the final rename is atomic)
+    const tmp = join(outDir, `.tmp-${process.pid}-${Math.random().toString(36).slice(2)}`);
     try {
-      rmSync(dir, { recursive: true, force: true });
-      mkdirSync(dir, { recursive: true });
       mkdirSync(tmp, { recursive: true });
-      // download just this package's tarball
       const { stdout } = await run(npmBin, ["pack", `${name}@${version}`, "--json", "--pack-destination", tmp, "--no-audit", "--no-fund", "--loglevel=error"], { timeout: 3 * 60_000, maxBuffer: 20 * 1024 * 1024, shell: isWin });
-      let tgz;
-      try { tgz = join(tmp, JSON.parse(stdout)[0].filename); } catch { tgz = join(tmp, readdirSync(tmp).find((f) => f.endsWith(".tgz"))); }
-      // extract, stripping the leading "package/" so package.json is at the folder root
-      await run("tar", ["-xzf", tgz, "-C", dir, "--strip-components=1"], { timeout: 2 * 60_000, shell: isWin });
-      writeFileSync(join(dir, DONE), version);
+      let file;
+      try { file = JSON.parse(stdout)[0].filename; } catch { file = readdirSync(tmp).find((f) => f.endsWith(".tgz")); }
+      renameSync(join(tmp, file), tgzPath); // keep the tarball as-is, one file per package
       rmSync(tmp, { recursive: true, force: true });
       return { name, version, ok: true };
     } catch (e) {
@@ -76,5 +72,5 @@ await Promise.all(Array.from({ length: CONC }, async () => {
 results.sort((a, b) => `${a.name}@${a.version}`.localeCompare(`${b.name}@${b.version}`));
 writeFileSync(join(outDir, "download-results.json"), JSON.stringify(results, null, 2));
 const failed = results.filter((r) => !r.ok);
-console.log(`\nDone. downloaded/skipped=${results.length - failed.length}  failed=${failed.length}`);
+console.log(`\nDone. downloaded/skipped=${results.length - failed.length}  failed=${failed.length}  (each package kept as a single .tgz)`);
 if (failed.length) console.log("Failed packages are in download-results.json — re-run to retry.");

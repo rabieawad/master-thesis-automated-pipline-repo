@@ -84,8 +84,10 @@ async function declaredDependencyCount(name) {
 }
 
 async function download({ rank, name }) {
-  const dir = join(outDir, folderName(name));
-  if (existsSync(join(dir, DONE))) return { rank, name, ok: true, skipped: true };
+  const folder = folderName(name);
+  const dir = join(outDir, folder);
+  const tgz = join(outDir, `${folder}.tgz`);
+  if (existsSync(tgz)) return { rank, name, ok: true, skipped: true };
 
   if (ONLY_WITH_DEPS) {
     const deps = await declaredDependencyCount(name);
@@ -106,7 +108,12 @@ async function download({ rank, name }) {
       const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes" };
       await run(pmBin, args, { cwd: dir, env, timeout: 5 * 60_000, maxBuffer: 20 * 1024 * 1024, shell: isWin });
       const version = JSON.parse(readFileSync(join(dir, "node_modules", ...name.split("/"), "package.json"), "utf8")).version;
-      writeFileSync(join(dir, DONE), version);
+      // "always tar the download": collapse the whole install tree (holder package.json +
+      // node_modules) into ONE .tgz, and keep a tiny meta sidecar so the bundler can learn
+      // name/version without extracting. Then remove the tree of many small files.
+      writeFileSync(join(outDir, `${folder}.meta.json`), JSON.stringify({ name, version }));
+      await run("tar", ["-czf", tgz, "-C", dir, "."], { timeout: 5 * 60_000, maxBuffer: 20 * 1024 * 1024, shell: isWin });
+      rmSync(dir, { recursive: true, force: true });
       return { rank, name, ok: true, version };
     } catch (e) {
       if (attempt === 3)

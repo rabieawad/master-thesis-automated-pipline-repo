@@ -173,6 +173,15 @@ const server = http.createServer(async (req, res) => {
     if (b.step === "all") steps = [...TIERS[tier].stepIds];
     else if (b.step === "continue") { const f = firstUnfinished(proj, tier); steps = f ? TIERS[tier].stepIds.slice(TIERS[tier].stepIds.indexOf(f)) : []; }
     else if (b.step === "setup") steps = ["setup"];
+    else if (typeof b.step === "string" && b.step.startsWith("upto:")) {
+      // run from the first unfinished step up to AND INCLUDING the target, then stop
+      const ids = TIERS[tier].stepIds;
+      const endIdx = ids.indexOf(b.step.slice(5));
+      if (endIdx < 0) return json(res, 400, { error: "bad target step" });
+      const f = firstUnfinished(proj, tier);
+      const startIdx = f ? ids.indexOf(f) : 0;
+      steps = startIdx <= endIdx ? ids.slice(startIdx, endIdx + 1) : [];
+    }
     else steps = [b.step];
     if (steps.length === 0) return json(res, 200, { nothing: true });
     runSequence(proj, tier, steps);
