@@ -228,7 +228,10 @@ async function renderProject(){ const pr=await fetch("/api/project?slug="+PROJ).
     $("#tt-"+t).innerHTML=`<div class="tt">${T.title}</div><div class="ts">${T.subtitle}</div><div class="pg"><span class="dots">${dots}</span> <span class="hint">${done}/${T.stepIds.length}</span></div>`;
   }
   const T=CFG.tiers[TIER]; const steps=pr[TIER].steps; const body=$("#state-body"); body.innerHTML="";
-  for(const s of T.stepIds){ const st=steps[s]||{status:"pending"}; const label=(T.steps.find(x=>x.id===s)?.label||s).replace(/^\d+\s*·\s*/,"");
+  const mode=(pr[TIER].params && pr[TIER].params.MODE) || "expensive";
+  for(const s of T.stepIds){ const st=steps[s]||{status:"pending"};
+    const rawLabel=(T.stepLabels && T.stepLabels[mode] && T.stepLabels[mode][s]) || (T.steps.find(x=>x.id===s)?.label) || s;
+    const label=rawLabel.replace(/^\d+\s*·\s*/,"");
     const tr=document.createElement("tr");
     tr.innerHTML=`<td><b>${s}</b> ${esc(label)}</td><td><span class="badge ${st.status}">${st.status}</span></td><td>${fmtTime(st.startedAt)}</td><td>${fmtDur(st.durationMs)}</td><td>${st.exitCode==null?"—":st.exitCode}</td><td><button class="small step-run" data-step="${s}">Run</button></td><td><button class="small" data-log="${s}">View</button></td>`;
     body.appendChild(tr);

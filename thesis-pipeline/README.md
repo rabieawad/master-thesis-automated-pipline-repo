@@ -7,6 +7,23 @@ A **project** is made of two sub-pipelines that run one after the other:
 
 **Tier 2's input is wired automatically to tier 1's output** — you never type a directory. You configure tier 2 *after* tier 1 has produced output (its parameters are edited later).
 
+### Tier-1 mode: expensive vs cheap
+
+Tier 1 has a `MODE` parameter:
+- **expensive** (default) — crawl → download **all** → bundle **all** → select the sample from the
+  *actual bundled* dependencies → collect → extract. Most accurate, most work.
+- **cheap** — crawl **and collect dependency/version metadata** from npm (no downloads) → **select the
+  sample from that metadata** → download **only the sample** → bundle it → collect → extract. You only
+  ever download/bundle the sample. The step labels in the state table change to match the mode.
+
+Cheap step 01 also writes two tables you can inspect:
+- `packages-dependencies.csv` — **Table A**: each package → its declared dependencies.
+- `version-metadata.csv` — **Table B**: each package *and* dependency → counts of major / minor / patch
+  releases, its latest version, and the full sorted list of versions.
+
+The sample is still bundled in cheap mode, so step 05 produces **accurate** (SBOM-based, exact-version)
+dependencies for the sample — the cheapness is in not downloading/bundling everything.
+
 ```bash
 node server.mjs            # open http://127.0.0.1:5273
 ```

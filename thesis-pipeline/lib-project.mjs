@@ -25,6 +25,7 @@ export const TIERS = {
     subtitle: "crawl → download → bundle → select → collect → extract",
     PARAMS: T1.PARAMS,
     STEPS: T1.STEPS,
+    stepLabels: T1.STEP_LABELS, // { expensive: {01:..}, cheap: {01:..} }
     stepIds: stepIdsOf(T1.STEPS),
     defaults: T1.DEFAULTS,
   },

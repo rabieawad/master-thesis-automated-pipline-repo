@@ -144,7 +144,7 @@ const server = http.createServer(async (req, res) => {
 
   if (p === "/" || p === "/index.html") { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); return res.end(readFileSync(join(HERE, "public", "index.html"))); }
   if (p === "/api/config") {
-    const tiers = {}; for (const k of TIER_KEYS) { const T = TIERS[k]; tiers[k] = { key: k, title: T.title, subtitle: T.subtitle, params: T.PARAMS, defaults: T.defaults, steps: T.STEPS, stepIds: T.stepIds }; }
+    const tiers = {}; for (const k of TIER_KEYS) { const T = TIERS[k]; tiers[k] = { key: k, title: T.title, subtitle: T.subtitle, params: T.PARAMS, defaults: T.defaults, steps: T.STEPS, stepIds: T.stepIds, stepLabels: T.stepLabels }; }
     return json(res, 200, { tiers, tierKeys: TIER_KEYS, cwd: HERE, title: "Thesis pipeline" });
   }
 

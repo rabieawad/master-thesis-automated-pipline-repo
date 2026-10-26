@@ -11,6 +11,7 @@ export const HERE = dirname(fileURLToPath(import.meta.url));
 
 // Every knob, with the NEW defaults (zero-dep included; stage-04 min = 0).
 export const PARAMS = [
+  { key: "MODE", label: "Mode: expensive (download+bundle ALL, then select) or cheap (select from metadata first, download only the sample)", type: "select", options: ["expensive", "cheap"], default: "expensive" },
   { key: "TOP_N", label: "How many top packages to crawl (step 01)", type: "number", default: "1500" },
   { key: "PERIOD", label: "jsDelivr stats period (step 01)", type: "select", options: ["day", "week", "month", "year"], default: "month" },
   { key: "DOWNLOAD_LIMIT", label: "How many packages to download (step 02; 'all' or a number)", type: "text", default: "all" },
@@ -26,15 +27,30 @@ export const PARAMS = [
 ];
 export const DEFAULTS = Object.fromEntries(PARAMS.map((p) => [p.key, p.default]));
 
+// Step labels differ by MODE (same 6 slots, different meaning).
+export const STEP_LABELS = {
+  expensive: {
+    "01": "01 · Crawl top packages",
+    "02": "02 · Download with dependencies",
+    "03": "03 · Bundle + source map + SBOM",
+    "04": "04 · Select sample (from bundled deps)",
+    "05": "05 · Collect selected bundles",
+    "06": "06 · Extract functions",
+  },
+  cheap: {
+    "01": "01 · Crawl + dependency/version metadata",
+    "02": "02 · Select sample (from metadata)",
+    "03": "03 · Download the sample",
+    "04": "04 · Bundle the sample + SBOM",
+    "05": "05 · Collect selected bundles",
+    "06": "06 · Extract functions",
+  },
+};
+
 export const STEPS = [
   { id: "all", label: "Whole pipeline (01 → 06)" },
   { id: "setup", label: "Setup: install webpack / meriyah / escodegen" },
-  { id: "01", label: "01 · Crawl top packages" },
-  { id: "02", label: "02 · Download with dependencies" },
-  { id: "03", label: "03 · Bundle + source map + SBOM" },
-  { id: "04", label: "04 · Select sample" },
-  { id: "05", label: "05 · Collect selected bundles" },
-  { id: "06", label: "06 · Extract functions" },
+  ...["01", "02", "03", "04", "05", "06"].map((id) => ({ id, label: STEP_LABELS.expensive[id] })),
 ];
 
 export function dirs(outRoot) {
@@ -57,6 +73,7 @@ export function buildCommand(step, p) {
   for (const dir of Object.values(d)) mkdirSync(dir, { recursive: true });
   const node = process.execPath;
   const onlyWithDeps = String(p.INCLUDE_ZERO_DEP) === "0" ? "1" : "0";
+  const MODE = (p.MODE ?? "expensive").toLowerCase();
 
   switch (step) {
     case "all":
@@ -71,13 +88,19 @@ export function buildCommand(step, p) {
       };
     case "setup":
       return { cmd: "npm", args: ["install", "--no-save", "--no-audit", "--no-fund", "webpack", "meriyah@6.0.6", "escodegen@2.1.0"], cwd: HERE, env: {} };
+
+    // ----- CHEAP MODE: 01 crawl+metadata, 02 select, 03 download sample, 04 bundle sample -----
     case "01":
+      if (MODE === "cheap") return { cmd: node, args: [join(HERE, "01c-crawl-metadata.mjs"), d.D1, p.TOP_N, p.PERIOD, p.CONC], cwd: HERE, env: {} };
       return { cmd: node, args: [join(HERE, "01-1500-jsdeliver.mjs"), p.TOP_N, p.PERIOD], cwd: d.D1, env: {} };
     case "02":
+      if (MODE === "cheap") return { cmd: node, args: [join(HERE, "02c-select.mjs"), d.D1, d.D4, "--n", p.SAMPLE_N, "--min", p.MIN_DEPS, "--max", p.MAX_DEPS, "--seed", p.SEED], cwd: HERE, env: {} };
       return { cmd: node, args: [join(HERE, "02-download-with-deps.mjs"), join(d.D1, "jsdelivr-top.json"), d.D2, p.CONC, p.DOWNLOAD_LIMIT], cwd: HERE, env: { ONLY_WITH_DEPS: onlyWithDeps } };
     case "03":
+      if (MODE === "cheap") return { cmd: node, args: [join(HERE, "02-download-with-deps.mjs"), join(d.D4, "selected-list.json"), d.D2, p.CONC, "all"], cwd: HERE, env: { ONLY_WITH_DEPS: "0" } };
       return { cmd: node, args: [join(HERE, "03-bundle-and-sbom.mjs"), d.D2, d.D3, p.BUNDLE_CONC], cwd: HERE, env: { MINIFY: p.MINIFY } };
     case "04":
+      if (MODE === "cheap") return { cmd: node, args: [join(HERE, "03-bundle-and-sbom.mjs"), d.D2, d.D3, p.BUNDLE_CONC], cwd: HERE, env: { MINIFY: p.MINIFY } };
       return { cmd: node, args: [join(HERE, "04-select-sample40.mjs"), join(d.D3, "summary.json"), "--n", p.SAMPLE_N, "--min", p.MIN_DEPS, "--max", p.MAX_DEPS, "--seed", p.SEED, "--out", join(d.D4, "selected"), "--packages-dir", d.D2, "--copy-to", join(d.D4, "sample")], cwd: HERE, env: {} };
     case "05":
       return { cmd: node, args: [join(HERE, "05-collect-selected-bundles.mjs"), join(d.D4, "selected.json"), d.D3, d.D5], cwd: HERE, env: {} };
