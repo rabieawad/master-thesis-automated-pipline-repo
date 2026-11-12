@@ -1,0 +1,4 @@
+# Embedding pipeline (embed.py). Versions are the minimums from the jina-code-embeddings model card.
+torch>=2.7.1
+transformers>=4.53
+numpy>=1.24
