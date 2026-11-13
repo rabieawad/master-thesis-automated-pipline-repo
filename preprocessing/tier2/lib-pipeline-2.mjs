@@ -1,6 +1,6 @@
 // Shared definitions for the SECOND (reference) pipeline: parameters, steps,
 // output layout and the exact command each step runs. Imported by server2.mjs
-// (web panel) and wizard2.mjs (interactive CLI). The steps 01..04 scripts and
+// (web panel) and wizard2.mjs (interactive CLI). The steps 01..05 scripts and
 // run-pipeline-2.sh keep working on their own without this file.
 
 import { fileURLToPath } from "node:url";
@@ -22,16 +22,21 @@ export const PARAMS = [
   { key: "BUNDLE_CONC", label: "Packages pseudo-bundled at once (step 03)", type: "number", default: "4" },
   { key: "MINIFY", label: "Minify the pseudo-bundles (step 03; off = correct LOC in step 04)", type: "bool", default: "0" },
   { key: "MIN_LOC", label: "Keep only functions with LOC >= this (step 04; 0 = keep all, 6 = paper filter)", type: "number", default: "0" },
+  { key: "DEDUP_MODE", label: "Step 05 identity: normalized = same body after local renaming (v0, v1, …); exact = same raw body text", type: "select", options: ["normalized", "exact"], default: "normalized" },
+  { key: "DEDUP_STRICT_TYPE", label: "Step 05: keep `function f(){}` and `f = function(){}` with identical bodies apart (off = treat as one kind)", type: "bool", default: "0" },
+  { key: "TRIVIAL_NODES", label: "Step 05: flag functions with fewer AST nodes than this as trivial (e.g. `{}`, `{ return v0; }`)", type: "number", default: "6" },
+  { key: "NEAR_THRESHOLD", label: "Step 05: also list near-duplicate pairs with Jaccard ≥ this (e.g. 0.85; 0 = off). Listed only, never merged", type: "number", default: "0" },
 ];
 export const DEFAULTS = Object.fromEntries(PARAMS.map((p) => [p.key, p.default]));
 
 export const STEPS = [
-  { id: "all", label: "Whole reference pipeline (01 → 04)" },
+  { id: "all", label: "Whole reference pipeline (01 → 05)" },
   { id: "setup", label: "Setup: install bundler + collector deps" },
   { id: "01", label: "01 · Build reference list (+ version expansion)" },
   { id: "02", label: "02 · Download packages (npm pack)" },
   { id: "03", label: "03 · Pseudo-bundle (package's own code)" },
   { id: "04", label: "04 · Extract functions" },
+  { id: "05", label: "05 · Deduplicate functions across versions" },
 ];
 
 export function dirs(outRoot) {
@@ -42,6 +47,7 @@ export function dirs(outRoot) {
     D2: join(OUT, "02_downloaded_packages"),
     D3: join(OUT, "03_pseudo_bundles"),
     D4: join(OUT, "04_extracted_functions"),
+    D5: join(OUT, "05_deduplicated_functions"),
     LOGS: join(OUT, "logs"),
   };
 }
@@ -49,7 +55,7 @@ export function dirs(outRoot) {
 // Which output directory each step OWNS (what to wipe on a clean re-run from a step).
 export function stepDirs(outRoot) {
   const d = dirs(outRoot);
-  return { "01": [d.D1], "02": [d.D2], "03": [d.D3], "04": [d.D4] };
+  return { "01": [d.D1], "02": [d.D2], "03": [d.D3], "04": [d.D4], "05": [d.D5] };
 }
 
 export function buildCommand(step, p) {
@@ -68,6 +74,7 @@ export function buildCommand(step, p) {
           INPUT_DIR: p.INPUT_DIR, VERSIONS: p.VERSIONS, INCLUDE_PACKAGE: p.INCLUDE_PACKAGE,
           SAMPLE_THRESHOLD: p.SAMPLE_THRESHOLD, SAMPLE_STRATEGY: p.SAMPLE_STRATEGY, ADJACENT_N: p.ADJACENT_N, PER_MINOR_N: p.PER_MINOR_N, SEED: p.SEED,
           CONC: p.CONC, BUNDLE_CONC: p.BUNDLE_CONC, MINIFY: p.MINIFY, MIN_LOC: p.MIN_LOC,
+          DEDUP_MODE: p.DEDUP_MODE, DEDUP_STRICT_TYPE: p.DEDUP_STRICT_TYPE, TRIVIAL_NODES: p.TRIVIAL_NODES, NEAR_THRESHOLD: p.NEAR_THRESHOLD,
         },
       };
     case "setup":
@@ -102,6 +109,15 @@ export function buildCommand(step, p) {
       return { cmd: node, args: [join(HERE, "03_pseudo-bundle.mjs"), d.D2, d.D3, p.BUNDLE_CONC], cwd: HERE, env: { MINIFY: p.MINIFY } };
     case "04":
       return { cmd: node, args: [join(HERE, "04_extract-functions.mjs"), join(d.D3, "bundles"), d.D4, "--min-loc", p.MIN_LOC], cwd: HERE, env: {} };
+    case "05": {
+      // pure Node, no extra deps; holds every unique function in memory, so raise the heap cap
+      // (via NODE_OPTIONS so args[0] stays the script for the server's preflight check)
+      const a = [join(HERE, "05_dedup-functions.mjs"), d.D4, d.D5, "--mode", p.DEDUP_MODE || "normalized"];
+      if (String(p.DEDUP_STRICT_TYPE) === "1") a.push("--strict-type");
+      if (p.TRIVIAL_NODES != null && p.TRIVIAL_NODES !== "") a.push("--trivial-nodes", p.TRIVIAL_NODES);
+      if (Number(p.NEAR_THRESHOLD) > 0) a.push("--near", p.NEAR_THRESHOLD);
+      return { cmd: node, args: a, cwd: HERE, env: { NODE_OPTIONS: "--max-old-space-size=6144" } };
+    }
     default:
       throw new Error(`unknown step: ${step}`);
   }

@@ -16,11 +16,12 @@ test("PARAMS include SAMPLE_STRATEGY (default minor-window) and sampling knobs",
   assert.ok(by.PER_MINOR_N && by.SAMPLE_THRESHOLD && by.SEED);
 });
 
-test("stepDirs maps 01..04", () => {
+test("stepDirs maps 01..05", () => {
   const t = tmp(); try {
     const sd = T2.stepDirs(t.dir);
     assert.ok(sd["01"][0].endsWith("01_reference_list"));
     assert.ok(sd["04"][0].endsWith("04_extracted_functions"));
+    assert.ok(sd["05"][0].endsWith("05_deduplicated_functions"));
   } finally { t.cleanup(); }
 });
 
@@ -55,11 +56,31 @@ test("buildCommand passes --selection only when selection.json exists in output 
   } finally { t.cleanup(); }
 });
 
-test("steps 02/03/04 map to the right scripts", () => {
+test("steps 02/03/04/05 map to the right scripts", () => {
   const t = tmp(); try {
     const p = { ...Object.fromEntries(T2.PARAMS.map((x) => [x.key, x.default])), outDir: t.dir, INPUT_DIR: t.dir };
     assert.equal(scriptOf(T2.buildCommand("02", p)), "02_download.mjs");
     assert.equal(scriptOf(T2.buildCommand("03", p)), "03_pseudo-bundle.mjs");
     assert.equal(scriptOf(T2.buildCommand("04", p)), "04_extract-functions.mjs");
+    assert.equal(scriptOf(T2.buildCommand("05", p)), "05_dedup-functions.mjs");
+  } finally { t.cleanup(); }
+});
+
+test("buildCommand 05 reads step 04 output, writes 05_, and passes dedup flags", () => {
+  const t = tmp(); try {
+    const p = { ...Object.fromEntries(T2.PARAMS.map((x) => [x.key, x.default])), outDir: t.dir, INPUT_DIR: t.dir };
+    const def = T2.buildCommand("05", p);
+    assert.ok(String(def.args[0]).endsWith("05_dedup-functions.mjs"), "script is args[0] (server preflight)");
+    assert.ok(String(def.args[1]).endsWith("04_extracted_functions"));
+    assert.ok(String(def.args[2]).endsWith("05_deduplicated_functions"));
+    assert.equal(flag(def, "--mode"), "normalized");
+    assert.equal(flag(def, "--trivial-nodes"), "6");
+    assert.equal(def.args.includes("--strict-type"), false);
+    assert.equal(def.args.includes("--near"), false, "NEAR_THRESHOLD=0 -> no near pass");
+    assert.match(def.env.NODE_OPTIONS, /max-old-space-size/);
+    const on = T2.buildCommand("05", { ...p, DEDUP_MODE: "exact", DEDUP_STRICT_TYPE: "1", NEAR_THRESHOLD: "0.85" });
+    assert.equal(flag(on, "--mode"), "exact");
+    assert.ok(on.args.includes("--strict-type"));
+    assert.equal(flag(on, "--near"), "0.85");
   } finally { t.cleanup(); }
 });

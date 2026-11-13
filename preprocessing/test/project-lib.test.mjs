@@ -6,7 +6,7 @@ import { TIERS, stepDirsForTier, buildTierCommand, tierOutput } from "../lib-pro
 
 test("TIERS expose both pipelines with numbered step ids", () => {
   assert.deepEqual(TIERS.tier1.stepIds, ["01", "02", "03", "04", "05", "06"]);
-  assert.deepEqual(TIERS.tier2.stepIds, ["01", "02", "03", "04"]);
+  assert.deepEqual(TIERS.tier2.stepIds, ["01", "02", "03", "04", "05"]);
 });
 
 test("stepDirsForTier: tier1 mode-aware, tier2 monotonic", () => {

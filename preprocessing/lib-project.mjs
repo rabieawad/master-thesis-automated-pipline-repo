@@ -32,7 +32,7 @@ export const TIERS = {
   tier2: {
     key: "tier2",
     title: "Tier 2 · Reference dataset",
-    subtitle: "build list → download → pseudo-bundle → extract (input = tier 1 output)",
+    subtitle: "build list → download → pseudo-bundle → extract → dedup (input = tier 1 output)",
     PARAMS: tier2Params,
     STEPS: T2.STEPS,
     stepIds: stepIdsOf(T2.STEPS),

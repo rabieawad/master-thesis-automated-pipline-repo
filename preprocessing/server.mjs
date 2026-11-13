@@ -3,7 +3,7 @@
 //
 //   node server.mjs [port=5273]   then open http://127.0.0.1:5273
 //
-// A project = tier 1 (data preparation, 6 steps) + tier 2 (reference dataset, 4 steps).
+// A project = tier 1 (data preparation, 6 steps) + tier 2 (reference dataset, 5 steps).
 // Tier 2's input is auto-wired to tier 1's output, so you never type a directory.
 // Each project is saved under projects/<slug>/ with a per-tier state table and logs,
 // and is resumable (run whole tier / continue / single step). Create a new project,

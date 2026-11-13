@@ -11,6 +11,7 @@
 #   output2/02_downloaded_packages/ <name>@<version>/ (each package's own files)
 #   output2/03_pseudo_bundles/      bundles/<name>@<version>.js
 #   output2/04_extracted_functions/ <name>@<version>.functions.json + summary.csv
+#   output2/05_deduplicated_functions/ unique_functions.jsonl, occurrences.csv, version_index.json, summary.json
 #   output2/logs/                   one log per step
 #
 # Settings (environment variables):
@@ -26,6 +27,10 @@
 #   BUNDLE_CONC=4        packages pseudo-bundled at once (step 03)
 #   MINIFY=0             minify the pseudo-bundles (step 03); 0 keeps LOC correct in step 04
 #   MIN_LOC=0            keep only functions with LOC >= this (step 04); 6 = the paper's library filter
+#   DEDUP_MODE=normalized  step 05 identity: normalized (locals renamed) or exact (raw body text)
+#   DEDUP_STRICT_TYPE=0  step 05: 1 = keep FunctionDeclaration / FunctionExpression with equal bodies apart
+#   TRIVIAL_NODES=6      step 05: functions with fewer AST nodes are flagged trivial
+#   NEAR_THRESHOLD=0     step 05: >0 (e.g. 0.85) also lists near-duplicate pairs (never merged)
 #
 # Safe to stop and re-run: finished downloads/bundles are skipped.
 
@@ -40,15 +45,19 @@ CONC="${CONC:-6}"
 BUNDLE_CONC="${BUNDLE_CONC:-4}"
 MINIFY="${MINIFY:-0}"
 MIN_LOC="${MIN_LOC:-0}"
+DEDUP_MODE="${DEDUP_MODE:-normalized}"
+DEDUP_STRICT_TYPE="${DEDUP_STRICT_TYPE:-0}"
+TRIVIAL_NODES="${TRIVIAL_NODES:-6}"
+NEAR_THRESHOLD="${NEAR_THRESHOLD:-0}"
 
 if [ -z "$INPUT_DIR" ]; then echo "Set INPUT_DIR to the first pipeline's output folder, e.g. INPUT_DIR=../pipeline-ui/output ./run-pipeline-2.sh" >&2; exit 1; fi
 
 OUT="$HERE/output2"
-D1="$OUT/01_reference_list"; D2="$OUT/02_downloaded_packages"; D3="$OUT/03_pseudo_bundles"; D4="$OUT/04_extracted_functions"; LOGS="$OUT/logs"
-mkdir -p "$D1" "$D2" "$D3" "$D4" "$LOGS"
+D1="$OUT/01_reference_list"; D2="$OUT/02_downloaded_packages"; D3="$OUT/03_pseudo_bundles"; D4="$OUT/04_extracted_functions"; D5="$OUT/05_deduplicated_functions"; LOGS="$OUT/logs"
+mkdir -p "$D1" "$D2" "$D3" "$D4" "$D5" "$LOGS"
 banner() { printf '\n==== %s ====\n' "$*"; }
 
-for f in 01_build-list.mjs 02_download.mjs 03_pseudo-bundle.mjs 04_extract-functions.mjs; do
+for f in 01_build-list.mjs 02_download.mjs 03_pseudo-bundle.mjs 04_extract-functions.mjs 05_dedup-functions.mjs; do
   [ -f "$HERE/$f" ] || { echo "Missing $f next to run-pipeline-2.sh" >&2; exit 1; }
 done
 command -v node >/dev/null || { echo "node is not installed (need Node 18+)" >&2; exit 1; }
@@ -74,11 +83,19 @@ MINIFY="$MINIFY" node "$HERE/03_pseudo-bundle.mjs" "$D2" "$D3" "$BUNDLE_CONC" 2>
 banner "Step 04: extract functions (min-loc=$MIN_LOC) -> $D4"
 node "$HERE/04_extract-functions.mjs" "$D3/bundles" "$D4" --min-loc "$MIN_LOC" 2>&1 | tee "$LOGS/04_extract_functions.log"
 
+DEDUP_ARGS=(--mode "$DEDUP_MODE" --trivial-nodes "$TRIVIAL_NODES")
+[ "$DEDUP_STRICT_TYPE" = "1" ] && DEDUP_ARGS+=(--strict-type)
+if awk "BEGIN{exit !($NEAR_THRESHOLD > 0)}"; then DEDUP_ARGS+=(--near "$NEAR_THRESHOLD"); fi
+
+banner "Step 05: deduplicate functions (mode=$DEDUP_MODE) -> $D5"
+NODE_OPTIONS="--max-old-space-size=6144" node "$HERE/05_dedup-functions.mjs" "$D4" "$D5" "${DEDUP_ARGS[@]}" 2>&1 | tee "$LOGS/05_dedup_functions.log"
+
 banner "Done"
 cat <<EOF
 01 reference list  : $D1/reference-packages.csv
 02 downloaded      : $D2
 03 pseudo-bundles  : $D3/bundles
 04 functions       : $D4/summary.csv
+05 deduplicated    : $D5/unique_functions.jsonl  (+ occurrences.csv, version_index.json, summary.json)
 logs               : $LOGS
 EOF
