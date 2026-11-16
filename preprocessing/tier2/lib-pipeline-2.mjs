@@ -9,34 +9,75 @@ import { mkdirSync, existsSync } from "node:fs";
 
 export const HERE = dirname(fileURLToPath(import.meta.url));
 
+// Every setting. `group` decides where it appears in the settings panel, `label` is the short
+// name and `help` the one-line explanation shown under it. `modes` restricts a setting to
+// batch or streamed mode. KEEP_ARTIFACTS is a "multi" setting: a list of checkboxes, stored as
+// a comma list ("02,04"); `fixed` lists what is always kept and cannot be unticked.
+export const GROUPS = [
+  { id: "mode", title: "Mode & disk", help: "Streamed or batch, and which intermediate files to keep" },
+  { id: "packages", title: "Packages & versions", help: "Which packages and which of their versions are indexed" },
+  { id: "extraction", title: "Pseudo-bundling & extraction", help: "How each version is bundled and which functions are kept" },
+  { id: "dedup", title: "Deduplication", help: "When two functions count as the same" },
+  { id: "performance", title: "Performance", help: "Parallel work" },
+];
+export const KEEP_OPTIONS = [
+  { value: "02", label: "Downloaded tarballs", help: "02_downloaded_packages/*.tgz" },
+  { value: "03", label: "Pseudo-bundles", help: "03_pseudo_bundles/bundles/*.js" },
+  { value: "04", label: "Per-version function files", help: "04_extracted_functions/*.functions.json" },
+  { value: "partials", label: "Per-package partial results", help: "lets the merge be re-run with other trivial / near-duplicate settings" },
+];
 export const PARAMS = [
-  { key: "INPUT_DIR", label: "First pipeline's output folder (its 04_/05_ folders live here)", type: "text", default: "" },
-  { key: "VERSIONS", label: "Which versions to download per package (all = every major/minor/patch; sample = cap big histories)", type: "select", options: ["all", "sample", "minor", "latest", "exact"], default: "all" },
-  { key: "SAMPLE_THRESHOLD", label: "VERSIONS=sample: take all if a package has ≤ this many versions, else sample", type: "number", default: "50" },
-  { key: "SAMPLE_STRATEGY", label: "VERSIONS=sample: minor-window (simple: random anchor patch + N neighbours per minor) or minor-adjacent (older: observed-neighbours + per-minor coin)", type: "select", options: ["minor-window", "minor-adjacent"], default: "minor-window" },
-  { key: "PER_MINOR_N", label: "VERSIONS=sample: patches kept next to the random anchor, per major.minor line (so a line yields up to N+1). Lower = caps harder", type: "number", default: "4" },
-  { key: "ADJACENT_N", label: "VERSIONS=sample (minor-adjacent only): neighbours of the observed version to keep", type: "number", default: "4" },
-  { key: "SEED", label: "VERSIONS=sample: random seed (reproducible sampling)", type: "number", default: "42" },
-  { key: "INCLUDE_PACKAGE", label: "Include the packages themselves (not just their dependencies)", type: "bool", default: "1" },
-  { key: "CONC", label: "Parallel registry queries / downloads (steps 01-02)", type: "number", default: "6" },
-  { key: "BUNDLE_CONC", label: "Packages pseudo-bundled at once (step 03)", type: "number", default: "4" },
-  { key: "MINIFY", label: "Minify the pseudo-bundles (step 03; off = correct LOC in step 04)", type: "bool", default: "0" },
-  { key: "MIN_LOC", label: "Keep only functions with LOC >= this (step 04; 0 = keep all, 6 = paper filter)", type: "number", default: "0" },
-  { key: "DEDUP_MODE", label: "Step 05 identity: normalized = same body after local renaming (v0, v1, …); exact = same raw body text", type: "select", options: ["normalized", "exact"], default: "normalized" },
-  { key: "DEDUP_STRICT_TYPE", label: "Step 05: keep `function f(){}` and `f = function(){}` with identical bodies apart (off = treat as one kind)", type: "bool", default: "0" },
-  { key: "TRIVIAL_NODES", label: "Step 05: flag functions with fewer AST nodes than this as trivial (e.g. `{}`, `{ return v0; }`)", type: "number", default: "6" },
-  { key: "NEAR_THRESHOLD", label: "Step 05: also list near-duplicate pairs with Jaccard ≥ this (e.g. 0.85; 0 = off). Listed only, never merged", type: "number", default: "0" },
+  { key: "INPUT_DIR", group: "packages", label: "Tier-1 output folder", help: "Set automatically in a project.", type: "text", default: "" },
+  { key: "STREAM", group: "mode", label: "Streamed mode", help: "One package at a time: download → bundle → extract → collect, keeping only its final function collection. Off = batch mode, where every intermediate file of every package is on disk at once.", type: "bool", default: "1" },
+  { key: "KEEP_ARTIFACTS", group: "mode", label: "Keep these intermediate files", help: "Ticked steps keep all their files; unticked ones are deleted as soon as each package is done.", type: "multi", options: KEEP_OPTIONS, fixed: [{ label: "Each package's function collection", help: "packages/<package>.json — always kept" }, { label: "Logs", help: "always kept" }, { label: "Per-version records and group manifests", help: "always kept" }], default: "03", modes: ["streamed"] },
+  { key: "VERSIONS", group: "packages", label: "Versions per package", help: "all = every published stable version (Aletheia's full index). minor = patches of the observed major.minor. latest = newest only. exact = the observed version only.", type: "select", options: ["all", "minor", "latest", "exact"], default: "all" },
+  { key: "INCLUDE_PACKAGE", group: "packages", label: "Include the selected packages themselves", help: "Off = index only their dependencies.", type: "bool", default: "1" },
+  { key: "MINIFY", group: "extraction", label: "Minify pseudo-bundles", help: "On = faithful to Aletheia (swc). Off = un-minified, so line counts in function extraction are real.", type: "bool", default: "0" },
+  { key: "MIN_LOC", group: "extraction", label: "Minimum lines of code", help: "Keep only functions with at least this many lines. 0 = keep all; 6 = the Debun paper's filter.", type: "number", default: "0" },
+  { key: "DEDUP_MODE", group: "dedup", label: "Compare bodies as", help: "normalized: locals renamed v0, v1, … so a renamed variable still matches. exact: raw body text.", type: "select", options: ["normalized", "exact"], default: "normalized" },
+  { key: "DEDUP_IDENTITY", group: "dedup", label: "Identity check", help: "string: keep each function's full key and stop on any id collision. hash: compare the truncated sha256 ids only.", type: "select", options: ["string", "hash"], default: "string" },
+  { key: "DEDUP_STRICT_TYPE", group: "dedup", label: "Keep declarations and expressions apart", help: "On: `function f(){}` and `f = function(){}` with the same body stay two records.", type: "bool", default: "0" },
+  { key: "TRIVIAL_NODES", group: "dedup", label: "Trivial below (AST nodes)", help: "Functions smaller than this are flagged trivial, e.g. `{}` or `{ return v0; }`.", type: "number", default: "6" },
+  { key: "NEAR_THRESHOLD", group: "dedup", label: "List near-duplicates from (Jaccard)", help: "e.g. 0.85 lists pairs at least that similar; they are never merged. 0 = off.", type: "number", default: "0" },
+  { key: "CONC", group: "performance", label: "Parallel registry queries and downloads", help: "Used by the version list and the downloads.", type: "number", default: "6" },
+  { key: "BUNDLE_CONC", group: "performance", label: "Versions pseudo-bundled at once", help: "Within one package in streamed mode.", type: "number", default: "4" },
 ];
 export const DEFAULTS = Object.fromEntries(PARAMS.map((p) => [p.key, p.default]));
+
+// Tier 2 has two modes. Batch runs each step over ALL packages (steps 01..05). Streamed runs
+// step 01 once, then works through the tier-1 groups one package at a time (06) and merges the
+// per-package partials at the end (07) — same outputs, a fraction of the disk.
+// New projects get STREAM="1" from PARAMS, so streamed is the default for anything created
+// from now on. A saved project (or a caller) with no STREAM key at all predates streamed mode,
+// so it stays in batch mode and keeps resuming exactly as before.
+export const modeOf = (params) => (String(params?.STREAM ?? "") === "1" ? "streamed" : "batch");
+
+// Step labels differ by mode. In streamed mode the label carries the batch step numbers the
+// step stands for ("02–05", "05"), because that is what the user knows those stages as.
+export const STEP_LABELS = {
+  batch: {
+    "01": "01 · Build reference list (+ version expansion)",
+    "02": "02 · Download packages (npm pack)",
+    "03": "03 · Pseudo-bundle (package's own code)",
+    "04": "04 · Extract functions",
+    "05": "05 · Deduplicate functions across versions",
+  },
+  streamed: {
+    "01": "01 · Build reference list (+ version expansion)",
+    "06": "02–05 · Stream packages (download → bundle → extract → collect)",
+    "07": "05 · Merge",
+  },
+};
+
+// Which numbered steps a mode actually runs, in order.
+export const STEP_IDS = { batch: ["01", "02", "03", "04", "05"], streamed: ["01", "06", "07"] };
+export const ALL_STEP_IDS = ["01", "02", "03", "04", "05", "06", "07"];
+export const stepIdsFor = (mode = "batch") => STEP_IDS[mode] ?? STEP_IDS.batch;
 
 export const STEPS = [
   { id: "all", label: "Whole reference pipeline (01 → 05)" },
   { id: "setup", label: "Setup: install bundler + collector deps" },
-  { id: "01", label: "01 · Build reference list (+ version expansion)" },
-  { id: "02", label: "02 · Download packages (npm pack)" },
-  { id: "03", label: "03 · Pseudo-bundle (package's own code)" },
-  { id: "04", label: "04 · Extract functions" },
-  { id: "05", label: "05 · Deduplicate functions across versions" },
+  ...ALL_STEP_IDS.map((id) => ({ id, label: STEP_LABELS.batch[id] ?? STEP_LABELS.streamed[id] })),
 ];
 
 export function dirs(outRoot) {
@@ -53,12 +94,24 @@ export function dirs(outRoot) {
 }
 
 // Which output directory each step OWNS (what to wipe on a clean re-run from a step).
-export function stepDirs(outRoot) {
+// Mode-aware: in streamed mode the stream step owns everything the per-package work produces
+// (including the partials, version records and group manifests), while the merge step owns only
+// its own final files — wiping the whole 05_ folder there would destroy the partials it reads.
+export function stepDirs(outRoot, mode = "batch") {
   const d = dirs(outRoot);
+  if (String(mode).toLowerCase() === "streamed") {
+    return {
+      "01": [d.D1],
+      "06": [d.D2, d.D3, d.D4, join(d.OUT, "_work"), join(d.D5, "partials"), join(d.D5, "versions"), join(d.D5, "groups"), join(d.LOGS, "stream")],
+      "07": ["unique_functions.jsonl", "occurrences.csv", "version_index.json", "near_duplicates.csv", "summary.json"].map((f) => join(d.D5, f)),
+    };
+  }
   return { "01": [d.D1], "02": [d.D2], "03": [d.D3], "04": [d.D4], "05": [d.D5] };
 }
 
 export function buildCommand(step, p) {
+  // projects saved while the removed "sample" mode existed now index every version
+  if (String(p.VERSIONS ?? "").toLowerCase() === "sample") p = { ...p, VERSIONS: "all" };
   const d = dirs(p.outDir);
   for (const dir of Object.values(d)) mkdirSync(dir, { recursive: true });
   const node = process.execPath;
@@ -72,20 +125,15 @@ export function buildCommand(step, p) {
         cmd: "bash", args: [join(HERE, "run-pipeline-2.sh")], cwd: HERE,
         env: {
           INPUT_DIR: p.INPUT_DIR, VERSIONS: p.VERSIONS, INCLUDE_PACKAGE: p.INCLUDE_PACKAGE,
-          SAMPLE_THRESHOLD: p.SAMPLE_THRESHOLD, SAMPLE_STRATEGY: p.SAMPLE_STRATEGY, ADJACENT_N: p.ADJACENT_N, PER_MINOR_N: p.PER_MINOR_N, SEED: p.SEED,
           CONC: p.CONC, BUNDLE_CONC: p.BUNDLE_CONC, MINIFY: p.MINIFY, MIN_LOC: p.MIN_LOC,
-          DEDUP_MODE: p.DEDUP_MODE, DEDUP_STRICT_TYPE: p.DEDUP_STRICT_TYPE, TRIVIAL_NODES: p.TRIVIAL_NODES, NEAR_THRESHOLD: p.NEAR_THRESHOLD,
+          DEDUP_MODE: p.DEDUP_MODE, DEDUP_IDENTITY: p.DEDUP_IDENTITY, DEDUP_STRICT_TYPE: p.DEDUP_STRICT_TYPE, TRIVIAL_NODES: p.TRIVIAL_NODES, NEAR_THRESHOLD: p.NEAR_THRESHOLD,
+          STREAM: p.STREAM, KEEP_ARTIFACTS: p.KEEP_ARTIFACTS,
         },
       };
     case "setup":
-      return { cmd: "npm", args: ["install", "--no-save", "--no-audit", "--no-fund", "@swc/core", "acorn", "acorn-loose", "acorn-walk", "astring", "meriyah@6.0.6", "escodegen@2.1.0"], cwd: HERE, env: {} };
+      return { cmd: "npm", args: ["install", "--no-save", "--no-audit", "--no-fund", "@swc/core", "acorn", "acorn-loose", "acorn-walk", "astring", "meriyah@7.0.0", "escodegen@2.1.0"], cwd: HERE, env: {} };
     case "01": {
       const a = [join(HERE, "01_build-list.mjs"), p.INPUT_DIR || ".", d.D1, "--versions", p.VERSIONS, "--conc", p.CONC];
-      if (p.SAMPLE_THRESHOLD != null) a.push("--sample-threshold", p.SAMPLE_THRESHOLD);
-      if (p.SAMPLE_STRATEGY) a.push("--sample-strategy", p.SAMPLE_STRATEGY);
-      if (p.ADJACENT_N != null) a.push("--adjacent-n", p.ADJACENT_N);
-      if (p.PER_MINOR_N != null) a.push("--per-minor-n", p.PER_MINOR_N);
-      if (p.SEED != null) a.push("--seed", p.SEED);
       if (String(p.INCLUDE_PACKAGE) === "0") a.push("--no-package");
       a.push(...selArgs);
       return { cmd: node, args: a, cwd: HERE, env: {} };
@@ -94,11 +142,6 @@ export function buildCommand(step, p) {
       // dry-run of step 01: count what WOULD be downloaded for the current settings (+ sweep),
       // without writing the real list or downloading anything.
       const a = [join(HERE, "01_build-list.mjs"), p.INPUT_DIR || ".", d.D1, "--versions", p.VERSIONS, "--conc", p.CONC, "--preview"];
-      if (p.SAMPLE_THRESHOLD != null) a.push("--sample-threshold", p.SAMPLE_THRESHOLD);
-      if (p.SAMPLE_STRATEGY) a.push("--sample-strategy", p.SAMPLE_STRATEGY);
-      if (p.ADJACENT_N != null) a.push("--adjacent-n", p.ADJACENT_N);
-      if (p.PER_MINOR_N != null) a.push("--per-minor-n", p.PER_MINOR_N);
-      if (p.SEED != null) a.push("--seed", p.SEED);
       if (String(p.INCLUDE_PACKAGE) === "0") a.push("--no-package");
       a.push(...selArgs);
       return { cmd: node, args: a, cwd: HERE, env: {} };
@@ -106,16 +149,38 @@ export function buildCommand(step, p) {
     case "02":
       return { cmd: node, args: [join(HERE, "02_download.mjs"), join(d.D1, "reference-packages.json"), d.D2, p.CONC], cwd: HERE, env: {} };
     case "03":
-      return { cmd: node, args: [join(HERE, "03_pseudo-bundle.mjs"), d.D2, d.D3, p.BUNDLE_CONC], cwd: HERE, env: { MINIFY: p.MINIFY } };
+      // step 03 only reads UNMINIFIED=1 (MINIFY was passed but never read), so translate here,
+      // exactly as the streamed driver does
+      return { cmd: node, args: [join(HERE, "03_pseudo-bundle.mjs"), d.D2, d.D3, p.BUNDLE_CONC], cwd: HERE, env: { MINIFY: p.MINIFY, ...(String(p.MINIFY) === "0" ? { UNMINIFIED: "1" } : {}) } };
     case "04":
       return { cmd: node, args: [join(HERE, "04_extract-functions.mjs"), join(d.D3, "bundles"), d.D4, "--min-loc", p.MIN_LOC], cwd: HERE, env: {} };
     case "05": {
       // pure Node, no extra deps; holds every unique function in memory, so raise the heap cap
       // (via NODE_OPTIONS so args[0] stays the script for the server's preflight check)
-      const a = [join(HERE, "05_dedup-functions.mjs"), d.D4, d.D5, "--mode", p.DEDUP_MODE || "normalized"];
+      const a = [join(HERE, "05_dedup-functions.mjs"), d.D4, d.D5, "--mode", p.DEDUP_MODE || "normalized", "--identity", p.DEDUP_IDENTITY || "string"];
       if (String(p.DEDUP_STRICT_TYPE) === "1") a.push("--strict-type");
       if (p.TRIVIAL_NODES != null && p.TRIVIAL_NODES !== "") a.push("--trivial-nodes", p.TRIVIAL_NODES);
       if (Number(p.NEAR_THRESHOLD) > 0) a.push("--near", p.NEAR_THRESHOLD);
+      return { cmd: node, args: a, cwd: HERE, env: { NODE_OPTIONS: "--max-old-space-size=6144" } };
+    }
+    // ----- STREAMED MODE: 06 = steps 02-05a per package, 07 = step 05b (merge) -----
+    case "06": {
+      const a = [join(HERE, "06_stream-packages.mjs"), d.OUT, "--input", p.INPUT_DIR || ".",
+        "--conc", p.CONC, "--bundle-conc", p.BUNDLE_CONC, "--min-loc", p.MIN_LOC,
+        "--mode", p.DEDUP_MODE || "normalized", "--identity", p.DEDUP_IDENTITY || "string", "--keep", p.KEEP_ARTIFACTS ?? "",
+        "--trivial-nodes", p.TRIVIAL_NODES ?? "6"];
+      if (String(p.DEDUP_STRICT_TYPE) === "1") a.push("--strict-type");
+      if (String(p.INCLUDE_PACKAGE) === "0") a.push("--no-package");
+      // MINIFY is translated to step 03's UNMINIFIED inside the driver (step 03 is untouched)
+      return { cmd: node, args: a, cwd: HERE, env: { MINIFY: p.MINIFY } };
+    }
+    case "07": {
+      // same 6 GB heap as batch step 05: the merge holds every unique function in memory
+      const a = [join(HERE, "07_merge-partials.mjs"), d.D5];
+      if (p.TRIVIAL_NODES != null && p.TRIVIAL_NODES !== "") a.push("--trivial-nodes", p.TRIVIAL_NODES);
+      if (Number(p.NEAR_THRESHOLD) > 0) a.push("--near", p.NEAR_THRESHOLD);
+      const keep = String(p.KEEP_ARTIFACTS ?? "").split(",").map((s) => s.trim());
+      if (keep.some((k) => k === "partials" || k === "all")) a.push("--keep-partials");
       return { cmd: node, args: a, cwd: HERE, env: { NODE_OPTIONS: "--max-old-space-size=6144" } };
     }
     default:

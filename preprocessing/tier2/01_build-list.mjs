@@ -29,7 +29,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { parseVer, cmpVer, isStable, stableOf, sampleKept, keptCountForSample } from "./lib/sampling.mjs";
+import { parseVer, cmpVer, isStable, stableOf } from "./lib/versions.mjs";
 
 const run = promisify(execFile);
 const isWin = process.platform === "win32";
@@ -37,7 +37,7 @@ const npmBin = isWin ? "npm.cmd" : "npm";
 
 const args = process.argv.slice(2);
 const opt = (name, fb) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : fb; };
-const VALUE_FLAGS = ["--versions", "--patch-level", "--conc", "--sample-threshold", "--adjacent-n", "--per-minor-n", "--seed", "--sample-strategy", "--selection"];
+const VALUE_FLAGS = ["--versions", "--patch-level", "--conc", "--selection"];
 const positional = args.filter((a, i) => !a.startsWith("--") && !VALUE_FLAGS.includes(args[i - 1]));
 
 const INPUT = resolve(positional[0] ?? ".");
@@ -47,25 +47,17 @@ const outDir = resolve(positional[1] ?? "reference-list");
 //   minor  only patches within the recorded version's major.minor
 //   latest only the single newest stable version
 //   exact  only the exact recorded version
-//   sample cap huge histories: packages with <= --sample-threshold versions are taken whole;
-//          above it, a seeded strategy keeps the observed version + --adjacent-n neighbours and
-//          --per-minor-n patches per major.minor group (50/50 random vs contiguous). Strategy is
-//          pluggable via --sample-strategy (default "minor-adjacent").
+// (The old "sample" mode, which capped big version histories to save disk, was removed:
+//  tier 2 now streams one package at a time, so every version is always considered.)
 // --patch-level / PATCH_LEVEL stay as backward-compatible aliases for --versions / VERSIONS.
 const VERSIONS = (opt("--versions", opt("--patch-level", process.env.VERSIONS ?? process.env.PATCH_LEVEL)) ?? "all").toLowerCase();
 const CONC = Number(opt("--conc", process.env.CONC) ?? 5);
 const INCLUDE_PACKAGE = !args.includes("--no-package") && process.env.INCLUDE_PACKAGE !== "0";
-// --- sampling (only used when VERSIONS=sample) ---
-const SAMPLE_THRESHOLD = Number(opt("--sample-threshold", process.env.SAMPLE_THRESHOLD) ?? 50); // <= this many versions -> take all
-const ADJACENT_N = Number(opt("--adjacent-n", process.env.ADJACENT_N) ?? 4);                   // neighbours of the observed version to always keep
-const PER_MINOR_N = Number(opt("--per-minor-n", process.env.PER_MINOR_N) ?? 4);                // patches taken per major.minor group
-const SEED = Number(opt("--seed", process.env.SEED) ?? 42);                                    // reproducible sampling
-const SAMPLE_STRATEGY = (opt("--sample-strategy", process.env.SAMPLE_STRATEGY) ?? "minor-window").toLowerCase();
-// Preview / dry-run: count what WOULD be downloaded (and a free PER_MINOR_N sweep) without
-// writing the real list or downloading anything.
+// Preview / dry-run: count what WOULD be downloaded without writing the real list or
+// downloading anything.
 const PREVIEW = args.includes("--preview") || String(process.env.PREVIEW ?? "0") !== "0";
 
-if (!["all", "minor", "latest", "exact", "sample"].includes(VERSIONS)) { console.error(`--versions must be all|minor|latest|exact|sample`); process.exit(1); }
+if (!["all", "minor", "latest", "exact"].includes(VERSIONS)) { console.error(`--versions must be all|minor|latest|exact${VERSIONS === "sample" ? " (sample was removed: every version is now considered)" : ""}`); process.exit(1); }
 mkdirSync(outDir, { recursive: true });
 
 function findFile(...c) { for (const x of c) if (existsSync(x)) return x; return null; }
@@ -128,7 +120,7 @@ if (INCLUDE_PACKAGE) for (const [name, v] of verOf) if (!csvPkgs.has(name) && se
 console.log(`Base set: ${base.size} exact name@version (before version expansion)   versions=${VERSIONS}\n`);
 
 // ---------- version expansion via `npm view` ----------
-// (version/sampling helpers now live in ./lib/sampling.mjs so they can be unit-tested)
+// (version helpers live in ./lib/versions.mjs so they can be unit-tested)
 const versionsCache = new Map();
 let registryFailures = [];
 
@@ -161,10 +153,6 @@ async function selectVersions(name, version) {
     pick = stable;                                        // every major.minor.patch
   } else if (VERSIONS === "latest") {
     pick = [stable.reduce((m, x) => (cmpVer(x.p, m.p) > 0 ? x : m))];
-  } else if (VERSIONS === "sample") {
-    const chosen = sampleKept(name, version, stable, { strategy: SAMPLE_STRATEGY, perMinorN: PER_MINOR_N, adjacentN: ADJACENT_N, threshold: SAMPLE_THRESHOLD, seed: SEED });
-    pick = stable.filter((s) => chosen.has(s.v));
-    if (!pick.some((s) => s.v === version)) pick.push({ v: version, p: parseVer(version) }); // observed always in
   } else { // minor: only patches within the recorded version's major.minor
     const t = parseVer(version);
     pick = stable.filter(({ p }) => p.major === t.major && p.minor === t.minor);
@@ -179,9 +167,7 @@ const cell = (s) => (/[",\r\n]/.test(String(s)) ? `"${String(s).replaceAll('"', 
 
 if (PREVIEW) {
   // ---- DRY-RUN: count what would be downloaded, no list written, no download ----
-  const SWEEP_NS = [1, 2, 3, 4, 6, 8];
   const perAnchor = [];
-  const sweepTotals = Object.fromEntries(SWEEP_NS.map((n) => [n, 0]));
   let totalNow = 0, totalAll = 0, next = 0;
   await Promise.all(Array.from({ length: CONC }, async () => {
     while (next < baseEntries.length) {
@@ -191,7 +177,6 @@ if (PREVIEW) {
       const totalStable = stable.length || 1;
       perAnchor.push({ name, origin, observed: version, total_stable: totalStable, kept_now: keptNow });
       totalNow += keptNow; totalAll += totalStable;
-      for (const n of SWEEP_NS) sweepTotals[n] += keptCountForSample(name, version, stable, n, { strategy: SAMPLE_STRATEGY, adjacentN: ADJACENT_N, threshold: SAMPLE_THRESHOLD, seed: SEED });
       console.log(`  ${name}@${version}: ${totalStable} stable -> keep ${keptNow}`);
     }
   }));
@@ -199,12 +184,11 @@ if (PREVIEW) {
   const byOrigin = perAnchor.reduce((a, r) => ((a[r.origin] = (a[r.origin] ?? 0) + r.kept_now), a), {});
 
   const summary = {
-    settings: { VERSIONS, SAMPLE_THRESHOLD, SAMPLE_STRATEGY, PER_MINOR_N, ADJACENT_N, SEED, INCLUDE_PACKAGE },
+    settings: { VERSIONS, INCLUDE_PACKAGE },
     anchors: baseEntries.length,
     downloadsNow: totalNow,
     downloadsIfAll: totalAll,
     byOrigin,
-    sweepPerMinorN: VERSIONS === "sample" ? sweepTotals : null,
     perAnchor,
   };
   writeFileSync(join(outDir, "preview.json"), JSON.stringify(summary, null, 2) + "\n");
@@ -212,15 +196,10 @@ if (PREVIEW) {
     perAnchor.map((r) => [r.name, r.origin, r.observed, r.total_stable, r.kept_now].map(cell).join(",")).join("\n") + "\n");
 
   console.log(`\n==== PREVIEW (no download) ====`);
-  console.log(`settings: VERSIONS=${VERSIONS}` + (VERSIONS === "sample" ? `  threshold=${SAMPLE_THRESHOLD}  strategy=${SAMPLE_STRATEGY}  PER_MINOR_N=${PER_MINOR_N}  seed=${SEED}` : ""));
+  console.log(`settings: VERSIONS=${VERSIONS}`);
   console.log(`anchors (packages + deps): ${baseEntries.length}`);
   console.log(`WILL DOWNLOAD NOW: ${totalNow} name@version` + (VERSIONS !== "all" ? `   (VERSIONS=all would be ${totalAll})` : ""));
   console.log(`  by origin: ${Object.entries(byOrigin).map(([k, v]) => `${k}=${v}`).join("  ")}`);
-  if (VERSIONS === "sample") {
-    console.log(`\nPER_MINOR_N sweep (total downloads, same threshold/strategy/seed):`);
-    for (const n of SWEEP_NS) console.log(`  PER_MINOR_N=${n}  ->  ${sweepTotals[n]}`);
-    console.log(`  (VERSIONS=all would be ${totalAll})`);
-  }
   console.log(`\nbiggest anchors now: ` + perAnchor.slice(0, 8).map((r) => `${r.name}(${r.kept_now}/${r.total_stable})`).join(", "));
   console.log(`\nwrote ${join(outDir, "preview.json")} and preview.csv — nothing downloaded.`);
   if (registryFailures.length) console.warn(`\nNote: ${registryFailures.length} anchor(s) could not be version-listed (counted as 1 each): ${registryFailures.slice(0, 10).join(", ")}${registryFailures.length > 10 ? ", ..." : ""}`);

@@ -18,7 +18,13 @@
 //
 // Usage:
 //   node 05_dedup-functions.mjs [functionsDir=extracted-functions] [outDir=deduplicated-functions] \
-//        [--mode normalized|exact] [--strict-type] [--trivial-nodes 6] [--near 0.85] [--near-min-nodes 20]
+//        [--mode normalized|exact] [--strict-type] [--identity hash|string] \
+//        [--trivial-nodes 6] [--near 0.85] [--near-min-nodes 20]
+//
+//   --identity string  (default) compare the signature+body KEYS character by character. No hash
+//                      collision is possible, so "same function" means literally the same string.
+//   --identity hash    compare the truncated sha256 ids instead (the older, compact form). Both
+//                      give the same answer unless two different functions share a 24-char id.
 //
 // Writes:
 //   unique_functions.jsonl  one line per distinct function (text = most common raw variant)
@@ -86,15 +92,30 @@ export function bodyOf(fn, mode) {
   return null;
 }
 
-export function identity(fn, mode = "normalized", strictType = false, fallbackKey = "") {
+// The FULL comparison key of a function: signature, then the tagged body text itself.
+// This is what "same function" means, written out in full rather than hashed:
+//   "<signature>\0<bodySource>\0<body text>"
+// The source tag keeps e.g. a hashNorm from ever equalling a literal textNorm, and a function
+// with nothing comparable gets a per-instance key so it can never merge with anything.
+export function functionKey(fn, mode = "normalized", strictType = false, fallbackKey = "") {
   const b = bodyOf(fn, mode);
-  const h = createHash("sha256");
-  h.update(signature(fn, strictType)); h.update("\0");
-  // the source tag keeps e.g. a hashNorm from ever equalling a literal textNorm
-  if (b) { h.update(b.src); h.update("\0"); h.update(b.body); }
-  else { h.update("unkeyed\0" + fallbackKey); } // nothing comparable: never merged
-  return h.digest("hex").slice(0, 24);
+  return signature(fn, strictType) + "\0" + (b ? b.src + "\0" + b.body : "unkeyed\0" + fallbackKey);
 }
+
+export function identity(fn, mode = "normalized", strictType = false, fallbackKey = "") {
+  return createHash("sha256").update(functionKey(fn, mode, strictType, fallbackKey)).digest("hex").slice(0, 24);
+}
+
+// How two functions are compared:
+//   "string" (default) the keys themselves, compared character by character — no collision is
+//            possible by construction, which is what the dedup claim in the thesis rests on
+//   "hash"   sha256(key) truncated to 24 hex chars (96 bits) — compact, but two different
+//            functions could in principle share an id (a collision would silently MERGE them)
+// Both label a record with the same 24-char `id`; only the comparison differs. In "string" mode
+// an id shared by two DIFFERENT keys is therefore a real collision: it is reported and refused
+// instead of being merged away.
+export const IDENTITY_MODES = ["hash", "string"];
+export const shortId = (key) => createHash("sha256").update(key).digest("hex").slice(0, 24);
 
 // ------------------------------------------------------------------ near-duplicates (MinHash LSH)
 const TOKEN = /[A-Za-z_$][\w$]*|\d+(?:\.\d+)?|'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`[^`]*`|\S/g;
@@ -144,12 +165,44 @@ export function nearDuplicates(items, threshold, { bands = 16, rows = 4 } = {}) 
   return { pairs, considered: items.length, candidates: cand.size };
 }
 
-// ------------------------------------------------------------------ main
-export function dedup(functionsDir, outDir, opts = {}) {
-  const { mode = "normalized", strictType = false, trivialNodes = 6, near = null, nearMinNodes = 20, log = console.log } = opts;
-  const t0 = Date.now();
+// ------------------------------------------------------------------ state (collect / merge / finalize)
+//
+// The reading half of step 05 is `collect()`, which returns a JSON-SERIALIZABLE state.
+// `mergeStates()` folds several states into one and `finalize()` writes the output files.
+// `dedup()` is still exactly finalize(collect(...)), so batch mode is unchanged; the
+// streamed driver (06_stream-packages.mjs) instead calls collect() per package, saves the
+// state as a partial, and 07_merge-partials.mjs merges + finalizes them.
+//
+// Maps/Sets are stored as arrays of entries so insertion order survives JSON (the order
+// decides ties in the "most common raw variant", and the version_index key order).
+// DEDUP_MODE / DEDUP_STRICT_TYPE are baked into a state (identity is computed in collect);
+// TRIVIAL_NODES and NEAR_THRESHOLD are applied in finalize, so kept partials can be
+// re-finalized with different values.
+
+export const STATE_VERSION = 1;
+
+export function emptyState({ mode = "normalized", strictType = false, identity: idMode = "string" } = {}) {
+  return {
+    stateVersion: STATE_VERSION, mode, strictType, identity: idMode,
+    files: 0, firstFile: null, total: 0,
+    pkgVersions: [], uniq: [], occ: [], rawVariants: [], rawText: [], parents: [], versionIndex: [],
+    // "string" identity only: the exact comparison key behind each id, so partials can be
+    // merged with the same character-by-character comparison and a collision across two
+    // packages is still caught. Empty in "hash" mode.
+    keys: [],
+  };
+}
+
+// Read every <pkg>@<ver>.functions.json in `functionsDir` into a state.
+// opts: { mode, strictType, log, allowEmpty }  (allowEmpty: no files -> empty state instead of throwing)
+export function collect(functionsDir, opts = {}) {
+  const { mode = "normalized", strictType = false, log = console.log, allowEmpty = false, identity: idMode = "string" } = opts;
+  if (!IDENTITY_MODES.includes(idMode)) throw new Error(`identity must be ${IDENTITY_MODES.join(" or ")} (got ${idMode})`);
   const files = readdirSync(functionsDir).filter((f) => f.endsWith(".functions.json")).sort();
-  if (!files.length) throw new Error(`no *.functions.json files in ${functionsDir}  (run step 04 first)`);
+  if (!files.length) {
+    if (allowEmpty) return emptyState({ mode, strictType, identity: idMode });
+    throw new Error(`no *.functions.json files in ${functionsDir}  (run step 04 first)`);
+  }
 
   const pkgVersions = new Map();     // pkg -> [ver]
   const uniq = new Map();            // fid -> record
@@ -157,9 +210,24 @@ export function dedup(functionsDir, outDir, opts = {}) {
   const rawVariants = new Map();     // fid -> Map(rawKey -> count)
   const rawText = new Map();         // rawKey -> text
   const parents = new Map();         // fid -> Set(parent fid)
-  const versionIndex = {};
-  const bodySources = {};
+  const versionIndex = new Map();
+  const keyById = new Map();         // id -> the exact key it stands for ("string" identity)
   let total = 0;
+
+  // In "hash" mode the id IS the comparison: two functions are the same iff their truncated
+  // hashes match. In "string" mode the keys are compared directly and the id is only a label,
+  // so the same id arriving for a DIFFERENT key is a genuine collision, not a match.
+  const idFor = idMode === "string"
+    ? (key) => {
+        const id = shortId(key);
+        const seen = keyById.get(id);
+        if (seen === undefined) keyById.set(id, key);
+        else if (seen !== key) throw new Error(
+          `id collision: two DIFFERENT functions hash to the same 24-char id ${id}. ` +
+          `The string comparison kept them apart, but the ids would clash — widen the id before continuing.`);
+        return id;
+      }
+    : (key) => shortId(key);
 
   for (const [n, file] of files.entries()) {
     const key = file.slice(0, -".functions.json".length);
@@ -169,21 +237,19 @@ export function dedup(functionsDir, outDir, opts = {}) {
     if (!pkgVersions.has(pkg)) pkgVersions.set(pkg, []);
     pkgVersions.get(pkg).push(ver);
     const fns = JSON.parse(readFileSync(join(functionsDir, file), "utf8")).functions || [];
-    const fids = fns.map((fn, i) => identity(fn, mode, strictType, `${key}#${i}`));
-    versionIndex[key] = fids;
+    const fids = fns.map((fn, i) => idFor(functionKey(fn, mode, strictType, `${key}#${i}`)));
+    versionIndex.set(key, fids);
     fns.forEach((fn, i) => {
       const fid = fids[i];
       total++;
       if (!uniq.has(fid)) {
         const metrics = fn.metrics || {};
         const b = bodyOf(fn, mode);
-        bodySources[b?.src ?? "none"] = (bodySources[b?.src ?? "none"] || 0) + 1;
         uniq.set(fid, {
           id: fid, signature: signature(fn, strictType), type: fn.type, context: fn.context,
           params: fn.params, async: fn.async, generator: fn.generator, loc: fn.loc, metrics,
           strings: fn.strings, properties: fn.properties, globals: fn.globals,
           textNorm: fn.textNorm ?? null, keyedOn: b?.src ?? "none",
-          trivial: (metrics.nodes ?? 99) < trivialNodes,
         });
         occ.set(fid, new Map()); rawVariants.set(fid, new Map()); parents.set(fid, new Set());
       }
@@ -198,6 +264,103 @@ export function dedup(functionsDir, outDir, opts = {}) {
     });
     if ((n + 1) % 100 === 0 || n + 1 === files.length) log(`[${n + 1}/${files.length}] read  (${uniq.size} unique of ${total} so far)`);
   }
+
+  return {
+    stateVersion: STATE_VERSION, mode, strictType, identity: idMode,
+    files: files.length, firstFile: files[0] ?? null, total,
+    keys: [...keyById],
+    pkgVersions: [...pkgVersions],
+    uniq: [...uniq],
+    occ: [...occ].map(([fid, m]) => [fid, [...m]]),
+    rawVariants: [...rawVariants].map(([fid, m]) => [fid, [...m]]),
+    rawText: [...rawText],
+    parents: [...parents].map(([fid, s]) => [fid, [...s]]),
+    versionIndex: [...versionIndex],
+  };
+}
+
+// Fold states into one, in the order given. The FIRST state holding a function id wins
+// for that record's first-seen fields — which is what batch mode does, because it reads
+// files in sorted order and only fills a record the first time it sees the id. Callers
+// must therefore pass the partials in ascending `firstFile` order (see 07_merge-partials).
+export function mergeStates(states) {
+  const list = states.filter(Boolean);
+  if (!list.length) throw new Error("mergeStates: no states");
+  const mode = list[0].mode, strictType = list[0].strictType;
+  const idMode = list[0].identity ?? "hash";
+  for (const s of list) {
+    if (s.stateVersion !== STATE_VERSION) throw new Error(`partial has stateVersion ${s.stateVersion}, expected ${STATE_VERSION}`);
+    if (s.mode !== mode || s.strictType !== strictType || (s.identity ?? "hash") !== idMode)
+      throw new Error(`partials disagree on identity settings (mode=${s.mode}/${mode}, strictType=${s.strictType}/${strictType}, identity=${s.identity ?? "hash"}/${idMode}) — re-run the stream step with one setting`);
+  }
+
+  const pkgVersions = new Map(), uniq = new Map(), occ = new Map(), rawVariants = new Map();
+  const rawText = new Map(), parents = new Map(), versionIndex = new Map();
+  const keyById = new Map();
+  let files = 0, total = 0;
+
+  for (const s of list) {
+    files += s.files; total += s.total;
+    for (const [pkg, vers] of s.pkgVersions) {
+      if (!pkgVersions.has(pkg)) pkgVersions.set(pkg, []);
+      pkgVersions.get(pkg).push(...vers);
+    }
+    for (const [fid, rec] of s.uniq) if (!uniq.has(fid)) uniq.set(fid, rec); // first state wins
+    for (const [fid, entries] of s.occ) {
+      if (!occ.has(fid)) occ.set(fid, new Map());
+      const m = occ.get(fid);
+      for (const [k, idx] of entries) { if (!m.has(k)) m.set(k, []); m.get(k).push(...idx); }
+    }
+    for (const [fid, entries] of s.rawVariants) {
+      if (!rawVariants.has(fid)) rawVariants.set(fid, new Map());
+      const m = rawVariants.get(fid);
+      for (const [rk, c] of entries) m.set(rk, (m.get(rk) || 0) + c); // sum, first-insertion order kept
+    }
+    for (const [rk, text] of s.rawText) if (!rawText.has(rk)) rawText.set(rk, text);
+    for (const [fid, ps] of s.parents) {
+      if (!parents.has(fid)) parents.set(fid, new Set());
+      for (const p of ps) parents.get(fid).add(p);
+    }
+    for (const [key, fids] of s.versionIndex) versionIndex.set(key, fids);
+    // "string" identity: the same id must stand for the same key in every partial, or two
+    // different functions from two packages would be merged by their label alone
+    for (const [id, key] of s.keys ?? []) {
+      const seen = keyById.get(id);
+      if (seen === undefined) keyById.set(id, key);
+      else if (seen !== key) throw new Error(
+        `id collision across packages: the 24-char id ${id} stands for two DIFFERENT functions. ` +
+        `Widen the id before merging — the string comparison keeps them apart but their labels clash.`);
+    }
+  }
+
+  return {
+    stateVersion: STATE_VERSION, mode, strictType, identity: idMode,
+    files, firstFile: list[0].firstFile, total,
+    keys: [...keyById],
+    pkgVersions: [...pkgVersions], uniq: [...uniq],
+    occ: [...occ].map(([fid, m]) => [fid, [...m]]),
+    rawVariants: [...rawVariants].map(([fid, m]) => [fid, [...m]]),
+    rawText: [...rawText],
+    parents: [...parents].map(([fid, s]) => [fid, [...s]]),
+    versionIndex: [...versionIndex],
+  };
+}
+
+// Turn a state into finished records: the most common raw text, occurrence and version
+// counts, per-package version ranges and parents. Shared by finalize() (the merged output)
+// and packageDocument() (one package's own JSON), so both describe a function identically.
+export function deriveRecords(state, { trivialNodes = 6 } = {}) {
+  const pkgVersions = new Map(state.pkgVersions.map(([p, v]) => [p, [...v]]));
+  const occ = new Map(state.occ.map(([fid, e]) => [fid, new Map(e)]));
+  const rawVariants = new Map(state.rawVariants.map(([fid, e]) => [fid, new Map(e)]));
+  const rawText = new Map(state.rawText);
+  const parents = new Map(state.parents.map(([fid, p]) => [fid, new Set(p)]));
+  const versionIndex = Object.fromEntries(state.versionIndex);
+  // clone the records: finalize adds derived fields and must stay re-runnable on the same state
+  const uniq = new Map(state.uniq.map(([fid, rec]) => [fid, { ...rec, trivial: (rec.metrics?.nodes ?? 99) < trivialNodes }]));
+  // identical to batch's count: batch counted the body source once per FIRST-SEEN function
+  const bodySources = {};
+  for (const u of uniq.values()) bodySources[u.keyedOn] = (bodySources[u.keyedOn] || 0) + 1;
 
   for (const v of pkgVersions.values()) v.sort(cmpVersion);
 
@@ -218,6 +381,54 @@ export function dedup(functionsDir, outDir, opts = {}) {
     u.packages = packages;
     u.parent_ids = [...parents.get(fid)].sort();
   }
+  return { pkgVersions, occ, uniq, versionIndex, bodySources };
+}
+
+// One package's own function collection, as a single JSON object: every distinct function
+// found across all its versions, with the same fields as unique_functions.jsonl, plus where it
+// occurs (version -> indices) and which functions each version contains.
+// `pkgKey` (e.g. "@scope+name") names the package even when no version yielded functions.
+export function packageDocument(state, { trivialNodes = 6, settings = {}, pkgKey = null } = {}) {
+  const { pkgVersions, occ, uniq, versionIndex } = deriveRecords(state, { trivialNodes });
+  const pkgs = [...pkgVersions.keys()];
+  if (pkgs.length > 1) throw new Error(`packageDocument needs a one-package state (got ${pkgs.length})`);
+  const pkg = pkgs[0] ?? pkgKey;
+  if (!pkg) throw new Error("packageDocument: empty state and no pkgKey");
+  if (!pkgVersions.has(pkg)) pkgVersions.set(pkg, []);
+  const order = [...uniq.values()].sort((a, b) => b.n_versions - a.n_versions || (a.id < b.id ? -1 : 1));
+  const functions = order.map((u) => {
+    const { packages, ...rest } = u;
+    const mine = packages[pkg];
+    const occurrences = {};
+    for (const [k, idx] of [...occ.get(u.id)].sort((a, b) => cmpVersion(a[0].split("\0")[1], b[0].split("\0")[1]))) occurrences[k.split("\0")[1]] = idx;
+    return { ...rest, first: mine.first, last: mine.last, ranges: mine.ranges, occurrences };
+  });
+  const byVersion = {};
+  for (const v of pkgVersions.get(pkg)) byVersion[v] = versionIndex[`${pkg}@${v}`] ?? [];
+  return {
+    package: pkg.replace("+", "/"),
+    versions: pkgVersions.get(pkg),
+    settings: { dedup_mode: state.mode, strict_type: state.strictType, identity: state.identity ?? "hash", trivial_nodes: trivialNodes, ...settings },
+    summary: {
+      versions: pkgVersions.get(pkg).length,
+      function_instances: state.total,
+      unique_functions: functions.length,
+      unique_non_trivial: functions.filter((f) => !f.trivial).length,
+      in_one_version_only: functions.filter((f) => f.n_versions === 1).length,
+    },
+    functions,
+    version_index: byVersion,
+  };
+}
+
+// Write the step-05 output files from a state.
+// opts: { trivialNodes, near, nearMinNodes, log, t0, extra }  (extra: fields merged into summary.json)
+export function finalize(state, outDir, opts = {}) {
+  const { trivialNodes = 6, near = null, nearMinNodes = 20, extra = null } = opts;
+  const t0 = opts.t0 ?? Date.now();
+  const mode = state.mode, strictType = state.strictType;
+  const total = state.total;
+  const { pkgVersions, occ, uniq, versionIndex, bodySources } = deriveRecords(state, { trivialNodes });
 
   mkdirSync(outDir, { recursive: true });
   const order = [...uniq.values()].sort((a, b) => b.n_versions - a.n_versions || (a.id < b.id ? -1 : 1));
@@ -234,7 +445,7 @@ export function dedup(functionsDir, outDir, opts = {}) {
   writeFileSync(join(outDir, "version_index.json"), JSON.stringify(versionIndex));
 
   const summary = {
-    mode, strictType, files: files.length,
+    mode, strictType, identity: state.identity ?? "hash", files: state.files,
     packages: Object.fromEntries([...pkgVersions].map(([p, v]) => [p, v.length])),
     function_instances: total,
     unique_functions: uniq.size,
@@ -256,28 +467,38 @@ export function dedup(functionsDir, outDir, opts = {}) {
     summary.near = { threshold: near, considered, lsh_candidates: candidates, pairs: pairs.length };
   }
 
+  if (extra) Object.assign(summary, extra);
   summary.seconds = Math.round((Date.now() - t0) / 100) / 10;
   writeFileSync(join(outDir, "summary.json"), JSON.stringify(summary, null, 2));
   return summary;
+}
+
+// ------------------------------------------------------------------ main (batch)
+// Unchanged behaviour: read the whole functions dir, then write the outputs.
+export function dedup(functionsDir, outDir, opts = {}) {
+  const t0 = Date.now();
+  return finalize(collect(functionsDir, opts), outDir, { ...opts, t0 });
 }
 
 // ------------------------------------------------------------------ CLI
 const isMain = process.argv[1] && resolve(process.argv[1]) === resolve(new URL(import.meta.url).pathname);
 if (isMain) {
   const args = process.argv.slice(2);
-  const valued = new Set(["--mode", "--trivial-nodes", "--near", "--near-min-nodes"]);
+  const valued = new Set(["--mode", "--identity", "--trivial-nodes", "--near", "--near-min-nodes"]);
   const opt = (name, fb) => { const i = args.indexOf(name); return i >= 0 ? args[i + 1] : fb; };
   const positional = args.filter((a, i) => !a.startsWith("--") && !valued.has(args[i - 1]));
   const functionsDir = resolve(positional[0] ?? "extracted-functions");
   const outDir = resolve(positional[1] ?? "deduplicated-functions");
   const mode = opt("--mode", "normalized");
   if (!["normalized", "exact"].includes(mode)) { console.error(`--mode must be normalized or exact (got ${mode})`); process.exit(1); }
+  const idMode = opt("--identity", process.env.DEDUP_IDENTITY ?? "string");
+  if (!IDENTITY_MODES.includes(idMode)) { console.error(`--identity must be ${IDENTITY_MODES.join(" or ")} (got ${idMode})`); process.exit(1); }
   const nearRaw = opt("--near", "");
   const near = nearRaw === "" || Number(nearRaw) <= 0 ? null : Number(nearRaw);
   if (!existsSync(functionsDir)) { console.error(`Functions folder not found: ${functionsDir}  (run step 04 first)`); process.exit(1); }
   try {
     const s = dedup(functionsDir, outDir, {
-      mode, strictType: args.includes("--strict-type"),
+      mode, strictType: args.includes("--strict-type"), identity: idMode,
       trivialNodes: Number(opt("--trivial-nodes", 6)), near, nearMinNodes: Number(opt("--near-min-nodes", 20)),
     });
     console.log(JSON.stringify(s, null, 2));

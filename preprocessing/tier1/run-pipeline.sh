@@ -33,6 +33,8 @@
 #   MAX_DEPS=20     largest number of bundled dependencies allowed (step 04); raise it for larger trees
 #   SEED=42         random seed for the selection (step 04)
 #   MIN_LOC=0       keep only functions with at least this many lines (step 06); 0 = keep all, 6 = the paper's library filter
+#   CLAUDE_REPAIR=0 1 = after step 03, let Claude repair packages the bundler failed on (Claude Code must be installed);
+#                   CLAUDE_MAX_PACKAGES=20 CLAUDE_MAX_TURNS=40 CLAUDE_TIMEOUT_MIN=20 CLAUDE_BUDGET_USD= CLAUDE_MODEL= CLAUDE_BIN=claude
 #
 # Example, small test run:  TOP_N=100 DOWNLOAD_LIMIT=100 ./run-pipeline.sh
 
@@ -53,6 +55,9 @@ MIN_DEPS="${MIN_DEPS:-0}"
 MAX_DEPS="${MAX_DEPS:-20}"
 SEED="${SEED:-42}"
 MIN_LOC="${MIN_LOC:-0}"
+CLAUDE_REPAIR="${CLAUDE_REPAIR:-0}"
+# the bundler reads UNMINIFIED=1 (it never read MINIFY), so translate the friendly switch
+UNMINIFIED=""; [ "$MINIFY" = "0" ] && UNMINIFIED=1
 
 # INCLUDE_ZERO_DEP is the human-friendly switch; step 02 itself reads ONLY_WITH_DEPS.
 # INCLUDE_ZERO_DEP=1 (default) -> ONLY_WITH_DEPS=0 (download everything, zero-dep included)
@@ -84,7 +89,7 @@ command -v npm >/dev/null || { echo "npm is not installed" >&2; exit 1; }
 if ! node --input-type=module -e "await import('webpack'); await import('meriyah'); await import('escodegen')" >/dev/null 2>&1; then
   banner "Setup: installing webpack, meriyah and escodegen (once)"
   rm -rf "$HERE/node_modules/webpack" "$HERE/node_modules/meriyah" "$HERE/node_modules/escodegen"
-  npm install --no-save --no-audit --no-fund webpack meriyah@6.0.6 escodegen@2.1.0
+  npm install --no-save --no-audit --no-fund webpack meriyah@7.0.0 escodegen@2.1.0
 fi
 
 # ---------- step 01: crawl the top packages ----------
@@ -105,8 +110,18 @@ ONLY_WITH_DEPS="$ONLY_WITH_DEPS" node "$HERE/02-download-with-deps.mjs" "$D1/jsd
 banner "Step 03: bundle (MINIFY=$MINIFY) and write SBOMs -> $D3"
 # Minified Webpack builds use a lot of memory, so by default one package is bundled at a time and
 # may use most of the computer's memory. A package that still crashes is marked FAIL and skipped.
-MINIFY="$MINIFY" node "$HERE/03-bundle-and-sbom.mjs" "$D2" "$D3" "$BUNDLE_CONC" 2>&1 \
+MINIFY="$MINIFY" UNMINIFIED="$UNMINIFIED" node "$HERE/03-bundle-and-sbom.mjs" "$D2" "$D3" "$BUNDLE_CONC" 2>&1 \
   | tee "$LOGS/03_bundle_and_sbom.log"
+
+# ---------- step 03b (optional): Claude repairs the packages the bundler failed on ----------
+if [ "$CLAUDE_REPAIR" = "1" ]; then
+  banner "Step 03b: Claude repair of failed bundles -> $D3/claude_repair"
+  CLAUDE_ARGS=(--max "${CLAUDE_MAX_PACKAGES:-20}" --max-turns "${CLAUDE_MAX_TURNS:-40}" --timeout-min "${CLAUDE_TIMEOUT_MIN:-20}" --claude-bin "${CLAUDE_BIN:-claude}")
+  [ -n "${CLAUDE_BUDGET_USD:-}" ] && CLAUDE_ARGS+=(--budget-usd "$CLAUDE_BUDGET_USD")
+  [ -n "${CLAUDE_MODEL:-}" ] && CLAUDE_ARGS+=(--model "$CLAUDE_MODEL")
+  UNMINIFIED="$UNMINIFIED" node "$HERE/07-claude-repair-bundles.mjs" "$D2" "$D3" "${CLAUDE_ARGS[@]}" 2>&1 \
+    | tee "$LOGS/03b_claude_repair.log"
+fi
 
 # ---------- step 04: pick the random sample ----------
 banner "Step 04: select $SAMPLE_N packages with $MIN_DEPS-$MAX_DEPS bundled dependencies -> $D4"

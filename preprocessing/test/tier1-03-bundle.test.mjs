@@ -38,3 +38,30 @@ test("bundles an installed-tree package and writes bundle + sbom + modules + sum
     assert.ok(exists(join(t.dir, "out", "modules", "fx@1.0.0.json")), "modules report written");
   } finally { t.cleanup(); }
 });
+
+// ---------------------------------------------------------------- faithful to generate_bundles.py
+test("a dual ESM/CommonJS package is bundled from its ESM build, as Aletheia's import entry does", { skip }, () => {
+  const t = tmp(); try {
+    const pkgs = join(t.dir, "pkgs");
+    makeInstalledTgz(pkgs, "dual", "dual", "1.0.0", {
+      "package.json": JSON.stringify({ name: "dual", version: "1.0.0", exports: { ".": { import: "./esm.mjs", require: "./cjs.js" } } }),
+      "esm.mjs": 'export const which = "ESM_BUILD_MARKER";\n',
+      "cjs.js": 'exports.which = "CJS_BUILD_MARKER";\n',
+    });
+    const r = runNode(SCRIPT, [pkgs, join(t.dir, "out"), "1"]);
+    assert.equal(r.code, 0, r.stdout);
+    const map = JSON.parse(read(join(t.dir, "out", "bundles", "dual@1.0.0.min.js.map")));
+    assert.ok(map.sources.some((s) => s.endsWith("dual/esm.mjs")), "ESM build bundled: " + map.sources.join(", "));
+    assert.equal(map.sources.some((s) => s.endsWith("dual/cjs.js")), false, "CommonJS build not bundled");
+  } finally { t.cleanup(); }
+});
+
+test("the bundler keeps webpack 5's default minifier options and Aletheia's entry and install flags", () => {
+  const src = read(SCRIPT);
+  assert.match(src, /minimizerOptions: \{ compress: \{ passes: 2 \} \}/, "webpack 5 default: two compress passes");
+  assert.match(src, /import \* as pkg0 from/, "entry is generate_bundles.py's namespace import");
+  assert.doesNotMatch(src, /module\.exports = require\(/, "no CommonJS entry");
+  const dl = read(join(TIER1, "02-download-with-deps.mjs"));
+  assert.match(dl, /"--no-optional"/, "pnpm: --no-optional, as generate_bundles.py");
+  assert.match(dl, /"--omit=optional"/, "npm fallback: optional dependencies omitted too");
+});

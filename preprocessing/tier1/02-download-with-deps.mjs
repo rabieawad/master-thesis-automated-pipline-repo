@@ -101,8 +101,10 @@ async function download({ rank, name }) {
       writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "holder", version: "1.0.0", private: true }));
       const args =
         PM === "pnpm"
-          ? ["add", name, "--ignore-scripts", "--store-dir", storeDir, "--config.auto-install-peers=true", "--reporter=silent"]
-          : ["install", name, "--ignore-scripts", "--no-audit", "--no-fund", "--legacy-peer-deps", "--prefer-offline", "--loglevel=error"];
+          // --no-optional / --omit=optional: faithful to generate_bundles.py, which installed
+          // with `pnpm install --save-exact --no-optional --ignore-scripts`
+          ? ["add", name, "--ignore-scripts", "--no-optional", "--store-dir", storeDir, "--config.auto-install-peers=true", "--reporter=silent"]
+          : ["install", name, "--ignore-scripts", "--omit=optional", "--no-audit", "--no-fund", "--legacy-peer-deps", "--prefer-offline", "--loglevel=error"];
       // Never let git/ssh stop and ask a question (e.g. a dependency pointing at a private
       // GitHub repo): with these settings it fails right away and the package is marked FAIL.
       const env = { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_SSH_COMMAND: "ssh -o BatchMode=yes" };

@@ -6,11 +6,16 @@
  * line-of-code filter.
  *
  * Extraction (identical to the repo):
- *   - parse with meriyah 6.0.6 (`next: true`), script mode first, module mode on failure
+ *   - parse with meriyah 7.0.0 (`next: true`), trying sourceType 'script', then
+ *     'module', then 'commonjs' — the order used by debun-main's function-collector.ts
  *     (one further fallback — acorn-loose — is used only if meriyah cannot parse the
  *     bundle at all, so a single odd bundle is not a hard failure; see collectFunctions)
  *   - every function (declaration, expression, arrow) with a body is recorded,
  *     innermost first, with its own inner functions stripped:
+ *       * functions inside a function's parameter list (default values such as
+ *         `function g(a = () => 1)`) are recorded too, right after that function,
+ *         and stubbed in its signature — as debun-main's estree-walker strip does,
+ *         since the walker descends into the stub's `params` after replacing it
  *       * a declaration / expression keeps its own signature (name, params, async,
  *         generator) and only has its body emptied (`function f(a) {}`)
  *       * an arrow with a block body keeps its params and is emptied the same way;
@@ -82,9 +87,20 @@ function stripFunctions(node) {
         // and only empty its body. Declarations stay named declarations; an arrow with an
         // expression body collapses to `_`. This is the stub the current file leaves behind
         // in the parent, so the parent's emitted text/hash are unchanged.
-        return node.type === "ArrowFunctionExpression" && node.expression
+        const stub = node.type === "ArrowFunctionExpression" && node.expression
             ? { ...node, body: { type: "Identifier", name: "_" } }
             : { ...node, body: { type: "BlockStatement", body: [] } };
+
+        // debun-main parity: estree-walker keeps walking the replacement node, so
+        // functions in the parameter list (default values, destructuring defaults)
+        // are recorded after this function and stubbed in place. The params array
+        // is shared with `node`, exactly as with the walker's in-place replace.
+        if (Array.isArray(stub.params)) {
+            for (let i = 0; i < stub.params.length; i++) {
+                if (stub.params[i] && typeof stub.params[i] === "object") stub.params[i] = stripFunctions(stub.params[i]);
+            }
+        }
+        return stub;
     }
 
     // Process all child nodes
@@ -165,26 +181,26 @@ function getId(node) {
 export function collectFunctions(code) {
     functions = [];
     let ast;
-    try {
-        ast = parse(code, {
-            next: true,
-            module: false,
-            ranges: true,
-        });
-    } catch (e) {
+    // debun-main order: script, module, commonjs (meriyah 7 `sourceType`).
+    // `ranges: true` is ours (v2 start/end offsets); it does not change the AST shape.
+    for (const sourceType of ["script", "module", "commonjs"]) {
         try {
             ast = parse(code, {
                 next: true,
-                module: true,
+                sourceType,
                 ranges: true,
             });
-        } catch (e2) {
-            // Tolerant fallback (acorn-loose never throws): a single bundle meriyah can't
-            // parse at all (modern syntax, a stray shebang, non-JS that slipped in) is
-            // extracted best-effort instead of failing the whole bundle. Not part of the
-            // DEBUN port — only reached when both meriyah attempts have already failed.
-            ast = loose.parse(code, { ecmaVersion: "latest", sourceType: "module", ranges: true });
+            break;
+        } catch (e) {
+            // try the next source type
         }
+    }
+    if (!ast) {
+        // Tolerant fallback (acorn-loose never throws): a single bundle meriyah can't
+        // parse at all (modern syntax, a stray shebang, non-JS that slipped in) is
+        // extracted best-effort instead of failing the whole bundle. Not part of the
+        // DEBUN port — only reached when all three meriyah attempts have already failed.
+        ast = loose.parse(code, { ecmaVersion: "latest", sourceType: "module", ranges: true });
     }
     if (preStripHook) preStripHook(ast); // v2: function context is read before inner functions are stripped
     stripFunctions(ast);

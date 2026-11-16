@@ -14,9 +14,9 @@
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { join, resolve, relative } from "node:path";
-import { readFileSync, writeFileSync, renameSync, existsSync, readdirSync, statSync, mkdirSync, rmSync, createWriteStream } from "node:fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, readdirSync, statSync, mkdirSync, rmSync, createWriteStream, openSync, readSync, closeSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { HERE, PROJECTS_DIR, TIERS, projectDir, projectFile, tierOutput, tierLogs, buildTierCommand, stepDirsForTier } from "./lib-project.mjs";
+import { HERE, PROJECTS_DIR, TIERS, projectDir, projectFile, tierOutput, tierLogs, buildTierCommand, cleanStepOutputs, activeStepIds, allStepIds, tierView } from "./lib-project.mjs";
 
 const PORT = Number(process.argv[2] ?? process.env.PORT ?? 5273);
 mkdirSync(PROJECTS_DIR, { recursive: true });
@@ -37,7 +37,8 @@ function listProjects() {
   return out;
 }
 const slugify = (name) => (String(name || "project").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32) || "project") + "-" + randomUUID().slice(0, 4);
-const freshSteps = (tier) => Object.fromEntries(TIERS[tier].stepIds.map((s) => [s, { status: "pending", startedAt: null, finishedAt: null, exitCode: null, durationMs: null }]));
+// state for every step id the tier can have in ANY mode, so switching mode never loses a row
+const freshSteps = (tier) => Object.fromEntries(allStepIds(tier).map((s) => [s, { status: "pending", startedAt: null, finishedAt: null, exitCode: null, durationMs: null }]));
 
 function makeProject(name, tier1Params, tier2Params, externalOutput) {
   const slug = slugify(name);
@@ -55,13 +56,26 @@ function makeProject(name, tier1Params, tier2Params, externalOutput) {
 }
 
 // boot: any step left "running" is dead -> error
-for (const p of listProjects()) { let ch = false; for (const t of TIER_KEYS) for (const s of TIERS[t].stepIds) if (p[t].steps[s]?.status === "running") { p[t].steps[s].status = "error"; p[t].steps[s].note = "interrupted (server restarted)"; ch = true; } if (ch) saveProject(p); }
+for (const p of listProjects()) { let ch = false; for (const t of TIER_KEYS) for (const s of allStepIds(t)) if (p[t].steps[s]?.status === "running") { p[t].steps[s].status = "error"; p[t].steps[s].note = "interrupted (server restarted)"; ch = true; } if (ch) saveProject(p); }
 
 // ---------------- per-(project,tier) live runtime ----------------
 const runtime = new Map(); // `${slug}:${tier}` -> { listeners, buffer, busy, proc }
 function rt(slug, tier) { const k = `${slug}:${tier}`; if (!runtime.has(k)) runtime.set(k, { listeners: new Set(), buffer: [], busy: false, proc: null }); return runtime.get(k); }
-function emit(slug, tier, e) { const r = rt(slug, tier); r.buffer.push(e); if (r.buffer.length > 4000) r.buffer.splice(0, r.buffer.length - 4000); for (const res of r.listeners) writeSse(res, e); }
-const labelOf = (tier, step) => TIERS[tier].STEPS.find((s) => s.id === step)?.label ?? step;
+// keep the last ~4000 events for late joiners; trim in chunks so a fast step doesn't shift the array on every line
+function emit(slug, tier, e) { const r = rt(slug, tier); r.buffer.push(e); if (r.buffer.length > 5000) r.buffer.splice(0, r.buffer.length - 4000); for (const res of r.listeners) writeSse(res, e); }
+// a saved step log, at most its last 512 KB (a big bundling log can be tens of MB)
+function readLogTail(f, max = 512 * 1024) {
+  if (!existsSync(f)) return { text: "" };
+  const size = statSync(f).size;
+  if (size <= max) return { text: readFileSync(f, "utf8"), size };
+  const fd = openSync(f, "r"); const buf = Buffer.alloc(max);
+  try { readSync(fd, buf, 0, max, size - max); } finally { closeSync(fd); }
+  const text = buf.toString("utf8"); const nl = text.indexOf("\n");
+  return { text: nl >= 0 ? text.slice(nl + 1) : text, size, truncated: true, path: f };
+}
+const labelOf = (tier, step, proj) => { const v = proj && tierView(proj, tier).steps.find((s) => s.id === step); return v ? `${v.num} · ${v.label}` : (TIERS[tier].STEPS.find((s) => s.id === step)?.label ?? step); };
+// what the interface needs about a project: the saved project plus each tier's current step list
+const withView = (proj) => ({ ...proj, view: Object.fromEntries(TIER_KEYS.map((t) => [t, tierView(proj, t)])) });
 
 // ---------------- tier-2 per-package inclusion selection ----------------
 // The "survived" items from tier 1 = each selected package + its bundled dependencies.
@@ -113,20 +127,20 @@ function runStep(proj, tier, step) {
       const msg = `Script not found:\n  ${script}\nMake sure the "${tier}" folder sits next to server.mjs and still contains its 0*.mjs scripts (re-extract the zip if needed).`;
       proj[tier].steps[step] = { status: "error", startedAt: new Date().toISOString(), finishedAt: new Date().toISOString(), exitCode: 1, durationMs: 0, note: "script not found" };
       saveProject(proj);
-      try { mkdirSync(tierLogs(proj.slug, tier), { recursive: true }); writeFileSync(join(tierLogs(proj.slug, tier), `${step}.log`), `# ${labelOf(tier, step)}  ${new Date().toISOString()}\n\n${msg}\n`); } catch {}
+      try { mkdirSync(tierLogs(proj.slug, tier), { recursive: true }); writeFileSync(join(tierLogs(proj.slug, tier), `${step}.log`), `# ${labelOf(tier, step, proj)}  ${new Date().toISOString()}\n\n${msg}\n`); } catch {}
       emit(proj.slug, tier, { type: "line", stream: "err", text: msg });
-      emit(proj.slug, tier, { type: "step", step, status: "error", code: 1, label: labelOf(tier, step) });
+      emit(proj.slug, tier, { type: "step", step, status: "error", code: 1, label: labelOf(tier, step, proj) });
       return resolve_(1);
     }
 
     proj[tier].steps[step] = { status: "running", startedAt: new Date().toISOString(), finishedAt: null, exitCode: null, durationMs: null };
     saveProject(proj);
-    emit(proj.slug, tier, { type: "step", step, status: "running", label: labelOf(tier, step) });
+    emit(proj.slug, tier, { type: "step", step, status: "running", label: labelOf(tier, step, proj) });
     emit(proj.slug, tier, { type: "line", stream: "meta", text: `$ ${built.cmd} ${built.args.join(" ")}` });
 
     mkdirSync(tierLogs(proj.slug, tier), { recursive: true });
     const log = createWriteStream(join(tierLogs(proj.slug, tier), `${step}.log`), { flags: "w" });
-    log.write(`# ${labelOf(tier, step)}  ${new Date().toISOString()}\n$ ${built.cmd} ${built.args.join(" ")}\n\n`);
+    log.write(`# ${labelOf(tier, step, proj)}  ${new Date().toISOString()}\n$ ${built.cmd} ${built.args.join(" ")}\n\n`);
     const t0 = Date.now();
     const proc = spawn(built.cmd, built.args, { cwd: built.cwd ?? HERE, env: { ...process.env, ...(built.env ?? {}) }, shell: false });
     r.proc = proc;
@@ -139,7 +153,7 @@ function runStep(proj, tier, step) {
       fresh[tier].steps[step] = { status: code === 0 ? "done" : "error", startedAt: proj[tier].steps[step].startedAt, finishedAt: new Date().toISOString(), exitCode: code, durationMs: Date.now() - t0 };
       Object.assign(proj, fresh);
       saveProject(proj);
-      emit(proj.slug, tier, { type: "step", step, status: proj[tier].steps[step].status, code, label: labelOf(tier, step) });
+      emit(proj.slug, tier, { type: "step", step, status: proj[tier].steps[step].status, code, label: labelOf(tier, step, proj) });
       resolve_(code ?? 1);
     });
   });
@@ -152,7 +166,7 @@ async function runSequence(proj, tier, steps) {
   for (const step of steps) { const code = await runStep(proj, tier, step); if (code !== 0) { ok = false; break; } }
   r.busy = false; emit(proj.slug, tier, { type: "run", status: ok ? "done" : "error" });
 }
-const firstUnfinished = (proj, tier) => TIERS[tier].stepIds.find((s) => !["done", "imported"].includes(proj[tier].steps[s]?.status)) ?? null;
+const firstUnfinished = (proj, tier) => activeStepIds(proj, tier).find((s) => !["done", "imported"].includes(proj[tier].steps[s]?.status)) ?? null;
 
 // ---------------- console jobs ----------------
 let jobSeq = 0; const jobs = new Map();
@@ -181,12 +195,12 @@ const server = http.createServer(async (req, res) => {
 
   if (p === "/" || p === "/index.html") { res.writeHead(200, { "content-type": "text/html; charset=utf-8" }); return res.end(readFileSync(join(HERE, "public", "index.html"))); }
   if (p === "/api/config") {
-    const tiers = {}; for (const k of TIER_KEYS) { const T = TIERS[k]; tiers[k] = { key: k, title: T.title, subtitle: T.subtitle, params: T.PARAMS, defaults: T.defaults, steps: T.STEPS, stepIds: T.stepIds, stepLabels: T.stepLabels }; }
+    const tiers = {}; for (const k of TIER_KEYS) { const T = TIERS[k]; tiers[k] = { key: k, title: T.title, subtitle: T.subtitle, params: T.PARAMS, groups: T.GROUPS, defaults: T.defaults, modeFrom: T.modeFrom }; }
     return json(res, 200, { tiers, tierKeys: TIER_KEYS, cwd: HERE, title: "Thesis pipeline" });
   }
 
   // projects
-  if (p === "/api/projects" && req.method === "GET") return json(res, 200, listProjects());
+  if (p === "/api/projects" && req.method === "GET") return json(res, 200, listProjects().map(withView));
   if (p === "/api/projects" && req.method === "POST") { const b = await readBody(req); return json(res, 200, makeProject(b.name, b.tier1Params ?? {}, b.tier2Params ?? {})); }
   if (p === "/api/projects/import" && req.method === "POST") {
     const b = await readBody(req);
@@ -196,7 +210,7 @@ const server = http.createServer(async (req, res) => {
     const proj = makeProject(b.name || "imported", {}, b.tier2Params ?? {}, ext);
     return json(res, 200, { ...proj, warning: hasCsv ? undefined : "no selected_dependencies.csv found under that path — tier 2 step 01 may fail" });
   }
-  if (p === "/api/project" && req.method === "GET") { const proj = loadProject(q.get("slug")); return proj ? json(res, 200, proj) : json(res, 404, { error: "no such project" }); }
+  if (p === "/api/project" && req.method === "GET") { const proj = loadProject(q.get("slug")); return proj ? json(res, 200, withView(proj)) : json(res, 404, { error: "no such project" }); }
   if (p === "/api/project" && req.method === "DELETE") { const slug = q.get("slug"); if (TIER_KEYS.some((t) => rt(slug, t).busy)) return json(res, 409, { error: "project is running" }); try { rmSync(projectDir(slug), { recursive: true, force: true }); return json(res, 200, { ok: true }); } catch (e) { return json(res, 500, { error: String(e.message) }); } }
   if (p === "/api/project/rename" && req.method === "POST") { const b = await readBody(req); const proj = loadProject(b.slug); if (!proj) return json(res, 404, { error: "no such project" }); proj.name = String(b.name || proj.name); saveProject(proj); return json(res, 200, proj); }
   if (p === "/api/project/params" && req.method === "POST") { const b = await readBody(req); const proj = loadProject(b.slug); if (!proj) return json(res, 404, { error: "no such project" }); if (rt(proj.slug, b.tier).busy) return json(res, 409, { error: "tier is running" }); proj[b.tier].params = { ...proj[b.tier].params, ...(b.params ?? {}) }; saveProject(proj); return json(res, 200, proj); }
@@ -221,12 +235,12 @@ const server = http.createServer(async (req, res) => {
     if (rt(proj.slug, tier).busy) return json(res, 409, { error: "already running" });
     if (tier === "tier2") writeTier2Selection(proj); // sync inclusion selection before running
     let steps;
-    if (b.step === "all") steps = [...TIERS[tier].stepIds];
-    else if (b.step === "continue") { const f = firstUnfinished(proj, tier); steps = f ? TIERS[tier].stepIds.slice(TIERS[tier].stepIds.indexOf(f)) : []; }
+    if (b.step === "all") steps = [...activeStepIds(proj, tier)];
+    else if (b.step === "continue") { const ids = activeStepIds(proj, tier); const f = firstUnfinished(proj, tier); steps = f ? ids.slice(ids.indexOf(f)) : []; }
     else if (b.step === "setup") steps = ["setup"];
     else if (typeof b.step === "string" && b.step.startsWith("upto:")) {
       // run from the first unfinished step up to AND INCLUDING the target, then stop
-      const ids = TIERS[tier].stepIds;
+      const ids = activeStepIds(proj, tier);
       const endIdx = ids.indexOf(b.step.slice(5));
       if (endIdx < 0) return json(res, 400, { error: "bad target step" });
       const f = firstUnfinished(proj, tier);
@@ -237,13 +251,14 @@ const server = http.createServer(async (req, res) => {
       // REDO from the target step to the end — re-run even completed steps (for new
       // parameters). Optional clean: wipe the output dirs those steps own first, so the
       // new parameters actually take effect (otherwise skip-if-exists reuses old output).
-      const ids = TIERS[tier].stepIds;
+      const ids = activeStepIds(proj, tier);
       const startIdx = ids.indexOf(b.step.slice(5));
       if (startIdx < 0) return json(res, 400, { error: "bad target step" });
       steps = ids.slice(startIdx);
       if (b.clean) {
-        const map = stepDirsForTier(proj, tier);
-        for (const s of steps) for (const dir of (map[s] || [])) { try { rmSync(dir, { recursive: true, force: true }); } catch {} }
+        // bundles are never deleted: a clean re-run moves them to _archived_bundles/
+        const c = cleanStepOutputs(proj, tier, steps);
+        for (const a of c.archived) emit(proj.slug, tier, { type: "line", stream: "meta", text: `kept the existing bundles: moved ${a.from} -> ${a.to}` });
       }
       // reset downstream state so the table shows a clean re-run
       for (const s of steps) proj[tier].steps[s] = { status: "pending", startedAt: null, finishedAt: null, exitCode: null, durationMs: null };
@@ -256,7 +271,7 @@ const server = http.createServer(async (req, res) => {
   }
   if (p === "/api/project/stream") { const slug = q.get("slug"), tier = q.get("tier"); if (!existsSync(projectFile(slug))) { res.writeHead(404); return res.end(); } const r = rt(slug, tier); res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" }); for (const e of r.buffer) writeSse(res, e); r.listeners.add(res); req.on("close", () => r.listeners.delete(res)); return; }
   if (p === "/api/project/stop" && req.method === "POST") { const b = await readBody(req); const r = rt(b.slug, b.tier); if (r?.proc) { r.proc.kill("SIGTERM"); return json(res, 200, { ok: true }); } return json(res, 404, { error: "nothing running" }); }
-  if (p === "/api/project/log") { const f = join(tierLogs(q.get("slug"), q.get("tier")), `${q.get("step")}.log`); return json(res, 200, { text: existsSync(f) ? readFileSync(f, "utf8") : "" }); }
+  if (p === "/api/project/log") { const f = join(tierLogs(q.get("slug"), q.get("tier")), `${q.get("step")}.log`); return json(res, 200, readLogTail(f)); }
   if (p === "/api/project/outputs") { const proj = loadProject(q.get("slug")); if (!proj) return json(res, 404, { error: "no such project" }); return json(res, 200, listOutputs(tierOutput(proj, q.get("tier")))); }
 
   // console (runs in the tier's output folder)

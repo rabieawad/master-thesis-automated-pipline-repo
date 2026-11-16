@@ -68,16 +68,18 @@ try {
       parallel: false,
       test: /\.[cm]?js(\?.*)?$/i,
       minify: MinimizerPlugin.terserMinify,
-      // Faithful to the original: webpack's DEFAULT terser options (generate_bundles.py set
-      // minimize:true with no custom minimizer, i.e. a single compress pass). parallel:false
-      // only moves terser out of worker threads to avoid ERR_WORKER_OUT_OF_MEMORY on big
-      // packages; it does not change the minified output.
-      minimizerOptions: {},
+      // Faithful to the original: generate_bundles.py set minimize:true with no custom
+      // minimizer, so webpack's DEFAULT minimizer ran, and webpack 5's default terser options
+      // are { compress: { passes: 2 } } (lib/config/defaults.js). parallel:false only moves
+      // terser out of worker threads to avoid ERR_WORKER_OUT_OF_MEMORY on big packages; it
+      // does not change the minified output.
+      minimizerOptions: { compress: { passes: 2 } },
     });
 } catch {
   try {
     const TerserPlugin = (await import("terser-webpack-plugin")).default;
-    makeMinimizer = () => new TerserPlugin({ parallel: false });
+    // same: webpack 5's default terser options, out of worker threads
+    makeMinimizer = () => new TerserPlugin({ parallel: false, terserOptions: { compress: { passes: 2 } } });
   } catch {}
 }
 // Default: three quarters of this computer's memory, so a package can use as much as it needs
@@ -207,8 +209,12 @@ function licenseEntry(l) {
 
 // ---------- bundling ----------
 function bundleOne(pkgDir, name, outDir, filename) {
-  const entry = join(pkgDir, ".bundle-entry.js");
-  writeFileSync(entry, `module.exports = require(${JSON.stringify(name)});\n`);
+  // Faithful to generate_bundles.py: an index.js that namespace-imports the package
+  // (`import * as pkg0 from '<name>';`). An ESM import makes webpack resolve the package
+  // with the "import" conditions, exactly as the original did; a require() would pick the
+  // "require" conditions and, for dual packages, bundle a different build of the code.
+  const entry = join(pkgDir, "index.js");
+  writeFileSync(entry, `import * as pkg0 from ${JSON.stringify(name).replace(/^"|"$/g, "'")};\n`);
   return new Promise((res) => {
     const compiler = webpack({
       // Faithful to Aletheia's generate_bundles.py webpack template. The original sets no

@@ -5,378 +5,689 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Thesis pipeline</title>
 <style>
-  :root {
-    --bg:#0b0f14; --panel:#141b23; --panel2:#1b242e; --edge:#33414f;
-    --ink:#f4f8fb; --dim:#b9c6d4; --accent:#39d3bf; --accent2:#5aa2ff;
-    --ok:#4be56d; --err:#ff6b63; --run:#ffc84a;
-    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+/* ---------- tokens ---------- */
+:root{
+  --bg:#F3F5F7; --surface:#FFFFFF; --raised:#FFFFFF; --sunk:#EBEEF2;
+  --ink:#1D2633; --muted:#5B6878; --faint:#8994A3; --line:#D8DEE6; --line-strong:#C3CBD6;
+  --track:#F0DB4F; --track-ink:#7A5E00; --track-soft:#FBF3C4;
+  --ok:#2E7D4F; --ok-soft:#E3F2E9; --run:#2F6FDB; --run-soft:#E4EDFC; --err:#C2412D; --err-soft:#FBE7E3;
+  --focus:#2F6FDB; --hover:#EDF0F4;
+  --serif: Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --r-s:6px; --r-m:10px; --r-l:14px;
+  --shadow: 0 1px 2px rgba(29,38,51,.06), 0 8px 24px rgba(29,38,51,.08);
+  color-scheme: light;
+}
+:root[data-theme="dark"]{
+  --bg:#15191F; --surface:#1C222A; --raised:#232A33; --sunk:#12161B;
+  --ink:#E6EAF0; --muted:#9AA6B5; --faint:#6F7B8A; --line:#2E3742; --line-strong:#3B4653;
+  --track:#E3CB4B; --track-ink:#E3CB4B; --track-soft:#2E2A17;
+  --ok:#5CC08A; --ok-soft:#18301F; --run:#7AA8F2; --run-soft:#1A2740; --err:#EF7A66; --err-soft:#3A1E19;
+  --focus:#7AA8F2; --hover:#262D37;
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 32px rgba(0,0,0,.35);
+  color-scheme: dark;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#15191F; --surface:#1C222A; --raised:#232A33; --sunk:#12161B;
+    --ink:#E6EAF0; --muted:#9AA6B5; --faint:#6F7B8A; --line:#2E3742; --line-strong:#3B4653;
+    --track:#E3CB4B; --track-ink:#E3CB4B; --track-soft:#2E2A17;
+    --ok:#5CC08A; --ok-soft:#18301F; --run:#7AA8F2; --run-soft:#1A2740; --err:#EF7A66; --err-soft:#3A1E19;
+    --focus:#7AA8F2; --hover:#262D37;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 12px 32px rgba(0,0,0,.35);
+    color-scheme: dark;
   }
-  *{box-sizing:border-box;}
-  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;}
-  header{padding:15px 22px;border-bottom:1px solid var(--edge);display:flex;align-items:baseline;gap:14px;}
-  header h1{font-size:20px;margin:0;font-weight:700;}
-  header .sub{color:var(--dim);font-size:13px;}
-  .wrap{display:grid;grid-template-columns:340px 1fr;height:calc(100vh - 56px);}
-  .side{border-right:1px solid var(--edge);overflow-y:auto;padding:16px;}
-  .main{display:flex;flex-direction:column;overflow:hidden;}
-  h2{font-size:13px;text-transform:uppercase;letter-spacing:.08em;color:var(--dim);margin:20px 0 10px;font-weight:700;}
-  button{background:var(--panel2);color:var(--ink);border:1px solid var(--edge);border-radius:7px;padding:9px 13px;font:inherit;font-size:14px;cursor:pointer;}
-  button:hover{border-color:var(--accent);}
-  button.primary{background:var(--accent);border-color:var(--accent);color:#042a25;font-weight:700;}
-  button.go{background:var(--accent2);border-color:var(--accent2);color:#04152e;font-weight:700;}
-  button.small{font-size:13px;padding:6px 10px;}
-  button:disabled{opacity:.45;cursor:not-allowed;}
-  input,select{width:100%;background:var(--panel2);color:var(--ink);border:1px solid var(--edge);border-radius:7px;padding:9px 11px;font:inherit;font-size:15px;}
-  .field{margin-bottom:11px;} .field label{display:block;font-size:13px;color:var(--dim);margin-bottom:4px;font-weight:600;}
-  .field.bool{display:flex;align-items:center;gap:9px;} .field.bool label{margin:0;color:var(--ink);font-size:15px;order:2;} .field.bool input{order:1;width:18px;height:18px;}
+}
 
-  .proj{padding:11px 12px;border:1px solid var(--edge);border-radius:9px;margin-bottom:9px;cursor:pointer;background:var(--panel);}
-  .proj:hover{border-color:var(--accent2);} .proj.sel{border-color:var(--accent);background:var(--panel2);}
-  .proj .nm{font-weight:700;font-size:15px;}
-  .proj .row{color:var(--dim);font-size:12.5px;margin-top:5px;display:flex;gap:7px;align-items:center;}
-  .proj .row b{color:var(--ink);font-weight:600;width:42px;}
-  .dots{display:inline-flex;gap:3px;}
-  .dot{width:9px;height:9px;border-radius:50%;background:var(--edge);}
-  .dot.done,.dot.imported{background:var(--ok);} .dot.running{background:var(--run);} .dot.error{background:var(--err);}
+/* ---------- base ---------- */
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--sans);-webkit-font-smoothing:antialiased}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--focus);outline-offset:2px;border-radius:4px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+[hidden]{display:none !important}
 
-  .bar{padding:13px 20px;border-bottom:1px solid var(--edge);display:flex;gap:10px;align-items:center;flex-wrap:wrap;}
-  .bar .title{font-size:19px;font-weight:700;margin-right:auto;}
-  .tiertabs{display:flex;gap:8px;padding:14px 20px 0;}
-  .tiertab{flex:1;text-align:left;padding:13px 16px;border:1px solid var(--edge);border-radius:11px;background:var(--panel);cursor:pointer;}
-  .tiertab.active{border-color:var(--accent);background:var(--panel2);}
-  .tiertab .tt{font-weight:700;font-size:16px;} .tiertab .ts{color:var(--dim);font-size:12.5px;margin-top:3px;}
-  .tiertab .pg{margin-top:7px;}
+.btn{display:inline-flex;align-items:center;gap:8px;border:1px solid var(--line-strong);background:var(--surface);color:var(--ink);
+  border-radius:var(--r-s);padding:7px 12px;font-size:14px;cursor:pointer;line-height:1.2;white-space:nowrap}
+.btn:hover{border-color:var(--muted)}
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.btn.primary{background:var(--ink);border-color:var(--ink);color:var(--bg);font-weight:600}
+.btn.primary:hover{opacity:.9}
+.btn.stop{background:var(--err);border-color:var(--err);color:#fff;font-weight:600}
+:root[data-theme="dark"] .btn.stop{color:#2A0E09}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]) .btn.stop{color:#2A0E09}}
+.btn.quiet{border-color:transparent;background:transparent;color:var(--muted)}
+.btn.quiet:hover{color:var(--ink);background:var(--sunk)}
+.btn.danger{color:var(--err);border-color:transparent;background:transparent}
+.btn.big{padding:10px 18px;font-size:15px}
+.btn .k{font-size:12px;color:var(--faint)}
+input[type=text],input[type=number],input[type=search],select{background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--r-s);padding:7px 10px;font-size:14px;width:100%}
+input[type=number]{max-width:160px}
 
-  #sel{min-height:0;}
-  .actions{padding:14px 20px 6px;display:flex;gap:9px;align-items:center;flex-wrap:wrap;}
-  .hintline{padding:0 20px 8px;color:var(--dim);font-size:13px;}
-  .statewrap{padding:6px 20px 14px;overflow:auto;height:34vh;flex:none;}
-  .splitter{height:10px;flex:none;cursor:row-resize;background:var(--panel2);border-top:1px solid var(--edge);border-bottom:1px solid var(--edge);position:relative;}
-  .splitter:hover{background:var(--accent);}
-  .splitter::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:46px;height:3px;border-radius:2px;background:var(--dim);}
-  table{width:100%;border-collapse:collapse;}
-  th{text-align:left;font-size:12.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--dim);padding:8px 12px;border-bottom:1px solid var(--edge);}
-  td{padding:10px 12px;border-bottom:1px solid var(--edge);font-size:15px;}
-  .badge{font-size:13px;font-weight:700;padding:3px 11px;border-radius:20px;border:1.5px solid var(--edge);color:var(--dim);}
-  .badge.running{color:var(--run);border-color:var(--run);} .badge.done,.badge.imported{color:var(--ok);border-color:var(--ok);} .badge.error{color:var(--err);border-color:var(--err);}
+/* ---------- shell ---------- */
+.shell{display:grid;grid-template-columns:272px 1fr;height:100vh}
+.rail{background:var(--sunk);border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+.brand{padding:20px 18px 12px}
+.rail-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:12px 18px;border-top:1px solid var(--line);font-size:12.5px;color:var(--muted)}
+.brand h1{font:600 19px/1.2 var(--serif);margin:0;letter-spacing:.01em}
+.theme{display:flex;border:1px solid var(--line-strong);border-radius:999px;overflow:hidden}
+.theme button{border:0;background:transparent;padding:3px 8px;font-size:12px;color:var(--muted);cursor:pointer}
+.theme button[aria-pressed="true"]{background:var(--surface);color:var(--ink)}
+.rail-actions{display:flex;flex-direction:column;gap:6px;padding:6px 18px 14px}
+.rail-actions .btn{justify-content:center}
+.projects{overflow-y:auto;padding:4px 10px 16px;flex:1}
+.projects h2{font:600 13px var(--sans);color:var(--muted);margin:6px 8px 8px}
+.proj-item{position:relative;margin-bottom:2px}
+.proj-del{position:absolute;top:8px;right:8px;border:1px solid transparent;background:transparent;color:var(--muted);border-radius:var(--r-s);padding:2px 8px;font-size:12.5px;cursor:pointer;opacity:0}
+.proj-item:hover .proj-del,.proj-del:focus-visible,.proj-item.open .proj-del{opacity:1}
+.proj-del:hover{color:var(--err);border-color:var(--err);background:var(--surface)}
+@media (hover: none){.proj-del{opacity:1}}
+.proj .nm{padding-right:58px}
+.proj{display:block;width:100%;text-align:left;border:1px solid transparent;background:transparent;border-radius:var(--r-m);padding:10px;cursor:pointer;margin-bottom:2px}
+.proj:hover{background:var(--hover)}
+.proj[aria-current="true"]{background:var(--surface);border-color:var(--line)}
+.proj .nm{font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mini{display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;margin-top:6px;font-size:12px;color:var(--muted)}
+.minibar{display:flex;gap:2px;height:6px}
+.minibar i{flex:1;border-radius:2px;background:var(--line)}
+.minibar i.done,.minibar i.imported{background:var(--ok)}
+.minibar i.running{background:var(--run)}
+.minibar i.error{background:var(--err)}
 
-  .subtabs{display:flex;gap:3px;padding:6px 16px 0;border-bottom:1px solid var(--edge);}
-  .subtab{background:none;border:1px solid transparent;border-bottom:none;border-radius:8px 8px 0 0;color:var(--dim);font-weight:600;}
-  .subtab.active{background:var(--panel);color:var(--ink);border-color:var(--edge);}
-  .subtabs{flex:none;}
-  .pane{flex:1;min-height:200px;display:none;flex-direction:column;overflow:hidden;} .pane.active{display:flex;}
-  .log{flex:1;min-height:0;overflow-y:auto;padding:14px 18px;margin:0;font-family:var(--mono);font-size:14px;white-space:pre-wrap;word-break:break-word;background:#06090d;}
-  .log .err{color:var(--err);} .log .meta{color:var(--accent2);font-weight:600;} .log .step{color:var(--accent);font-weight:700;}
-  .console-in{display:flex;gap:9px;padding:12px;border-top:1px solid var(--edge);} .console-in input{font-family:var(--mono);font-size:14px;}
-  .outs{flex:1;overflow-y:auto;padding:12px 18px;font-family:var(--mono);font-size:13.5px;}
-  .outs div{padding:3px 0;color:var(--dim);display:flex;justify-content:space-between;gap:18px;} .outs div span:first-child{color:var(--ink);}
-  .empty{color:var(--dim);padding:28px 20px;font-size:15px;}
-  dialog{background:var(--panel);color:var(--ink);border:1px solid var(--edge);border-radius:12px;padding:22px;width:min(600px,92vw);max-height:88vh;overflow:auto;}
-  dialog::backdrop{background:rgba(0,0,0,.55);}
-  .hint{color:var(--dim);font-size:13px;}
+.main{display:flex;flex-direction:column;min-width:0;min-height:0}
+.empty{margin:auto;max-width:420px;text-align:center;color:var(--muted);padding:40px}
+.empty h2{font:600 24px var(--serif);color:var(--ink);margin:0 0 8px}
+
+.head{display:flex;align-items:center;gap:12px;padding:20px 28px 12px}
+.head h2{font:600 26px/1.15 var(--serif);margin:0;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.menu{position:relative}
+.menu-list{position:absolute;right:0;top:calc(100% + 6px);background:var(--raised);border:1px solid var(--line);border-radius:var(--r-m);box-shadow:var(--shadow);min-width:220px;padding:6px;z-index:20}
+.menu-list button{display:block;width:100%;text-align:left;border:0;background:transparent;padding:8px 10px;border-radius:var(--r-s);cursor:pointer;font-size:14px}
+.menu-list button:hover{background:var(--sunk)}
+.menu-list hr{border:0;border-top:1px solid var(--line);margin:6px 0}
+.menu-list .danger{color:var(--err)}
+
+.tiers{display:flex;gap:8px;padding:0 28px}
+.tier{flex:1;text-align:left;border:1px solid var(--line);background:var(--surface);border-radius:var(--r-m);padding:10px 14px;cursor:pointer}
+.tier[aria-selected="true"]{border-color:var(--ink);box-shadow:inset 0 0 0 1px var(--ink)}
+.tier .t{font-weight:600}
+.tier .s{font-size:13px;color:var(--muted)}
+.note{padding:10px 28px 0;font-size:13px;color:var(--muted)}
+.note b{color:var(--ink);font-weight:600}
+.note .warn{color:var(--err)}
+
+.work{display:grid;grid-template-columns:minmax(330px,420px) 1fr;gap:20px;padding:16px 28px 24px;flex:1;min-height:0}
+
+/* ---------- the route (the one bold element) ---------- */
+.route{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);padding:18px 18px 16px;overflow-y:auto;min-height:0;display:flex;flex-direction:column}
+.route ol{list-style:none;margin:0;padding:0;position:relative}
+.step-row{position:relative;padding-left:40px}
+.step-row::before{content:"";position:absolute;left:13px;top:0;bottom:0;width:4px;background:var(--line)}
+.step-row:first-child::before{top:20px}
+.step-row:last-child::before{bottom:calc(100% - 20px)}
+.step-row.done::before,.step-row.imported::before{background:var(--track)}
+.step{display:grid;grid-template-columns:auto 1fr auto;gap:2px 10px;align-items:baseline;width:100%;text-align:left;border:0;background:transparent;padding:9px 10px;border-radius:var(--r-m);cursor:pointer}
+.step:hover{background:var(--hover)}
+.step-row[aria-current="true"] .step{background:var(--hover)}
+.dot{position:absolute;left:5px;top:12px;width:20px;height:20px;border-radius:50%;background:var(--surface);border:2px solid var(--line-strong);display:grid;place-items:center;font-size:11px;font-weight:700;color:transparent}
+.done .dot,.imported .dot{background:var(--track);border-color:var(--track);color:#3A2E00}
+.running .dot{border-color:var(--run);border-width:3px}
+.running .dot::after{content:"";position:absolute;inset:-6px;border-radius:50%;border:2px solid var(--run);opacity:.5;animation:pulse 1.6s ease-out infinite}
+.error .dot{background:var(--err);border-color:var(--err);color:#fff}
+@keyframes pulse{from{transform:scale(.8);opacity:.6}to{transform:scale(1.4);opacity:0}}
+@media (prefers-reduced-motion: reduce){.running .dot::after{animation:none}}
+.num{font:600 13px var(--mono);color:var(--muted);font-variant-numeric:tabular-nums}
+.lbl{font-weight:600;font-size:14.5px}
+.st{font-size:12.5px;color:var(--muted);white-space:nowrap}
+.st.done,.st.imported{color:var(--ok)} .st.running{color:var(--run)} .st.error{color:var(--err)}
+.sub{grid-column:2 / 4;font-size:12.5px;color:var(--faint)}
+.step-actions{display:flex;flex-wrap:wrap;gap:6px;padding:4px 10px 12px 10px}
+.step-actions label{display:flex;align-items:center;gap:6px;font-size:13px;color:var(--muted);width:100%}
+.route-foot{margin-top:auto;padding-top:16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;border-top:1px solid var(--line)}
+.route-foot .why{font-size:13px;color:var(--muted)}
+
+/* ---------- activity panel ---------- */
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r-l);display:flex;flex-direction:column;min-height:0;overflow:hidden}
+.tabs{display:flex;gap:4px;padding:8px 10px 0;border-bottom:1px solid var(--line)}
+.tab{border:0;background:transparent;padding:8px 12px;border-bottom:2px solid transparent;color:var(--muted);cursor:pointer;font-weight:600;font-size:14px}
+.tab[aria-selected="true"]{color:var(--ink);border-bottom-color:var(--ink)}
+.pane{flex:1;min-height:0;display:flex;flex-direction:column}
+.pane-bar{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid var(--line);font-size:13px;color:var(--muted);flex-wrap:wrap}
+.pane-bar .grow{flex:1}
+.chip{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--line-strong);border-radius:999px;padding:2px 10px;font-size:12px;color:var(--muted)}
+.chip.live{color:var(--run);border-color:var(--run)}
+.log{flex:1;min-height:0;overflow:auto;margin:0;padding:12px 16px;font:12.5px/1.55 var(--mono);white-space:pre-wrap;word-break:break-word;background:var(--sunk)}
+.log .err{color:var(--err)} .log .meta{color:var(--muted)} .log .mark{color:var(--track-ink);font-weight:700}
+.files{flex:1;overflow:auto;padding:6px 14px 14px}
+.files details{border-bottom:1px solid var(--line)}
+.files summary{display:flex;gap:10px;align-items:center;padding:9px 2px;cursor:pointer;list-style:none}
+.files summary::-webkit-details-marker{display:none}
+.files summary .n{font-weight:600;flex:1}
+.files summary .m{font-size:12.5px;color:var(--muted)}
+.tag{font-size:11.5px;font-weight:600;border-radius:999px;padding:1px 8px;background:var(--track-soft);color:var(--track-ink)}
+.files .row{display:flex;justify-content:space-between;gap:16px;padding:3px 2px 3px 18px;font:12.5px var(--mono);color:var(--muted)}
+.files .row span:first-child{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.pkgs{flex:1;overflow:auto}
+.pkgs table{width:100%;border-collapse:collapse;font-size:14px}
+.pkgs th{position:sticky;top:0;background:var(--surface);text-align:left;font-weight:600;color:var(--muted);font-size:13px;padding:8px 14px;border-bottom:1px solid var(--line)}
+.pkgs td{padding:6px 14px;border-bottom:1px solid var(--line)}
+.pkgs td.v{color:var(--muted);font:12.5px var(--mono)}
+.console-in{display:flex;gap:8px;padding:10px;border-top:1px solid var(--line)}
+.console-in input{font-family:var(--mono)}
+
+/* ---------- dialogs & settings ---------- */
+dialog{border:1px solid var(--line);border-radius:var(--r-l);background:var(--raised);color:var(--ink);padding:0;box-shadow:var(--shadow);max-width:94vw}
+dialog::backdrop{background:rgba(15,20,27,.45)}
+.dlg-head{display:flex;align-items:center;gap:12px;padding:18px 22px 12px}
+.dlg-head h3{font:600 21px var(--serif);margin:0;flex:1}
+.dlg-body{padding:0 22px 8px}
+.dlg-foot{display:flex;justify-content:flex-end;gap:8px;padding:14px 22px 18px;border-top:1px solid var(--line);align-items:center}
+.dlg-foot .left{margin-right:auto;font-size:13px;color:var(--muted)}
+.small-dlg{width:460px}
+.field-line{margin:6px 0 14px}
+.field-line label{display:block;font-weight:600;font-size:14px;margin-bottom:4px}
+.field-line p{margin:4px 0 0;font-size:13px;color:var(--muted)}
+
+.settings{width:880px;height:min(680px,88vh);flex-direction:column}
+.settings[open]{display:flex} /* only while open: a closed dialog must stay hidden */
+.settings .dlg-head input{max-width:280px}
+.set-wrap{display:grid;grid-template-columns:220px 1fr;flex:1;min-height:0;border-top:1px solid var(--line)}
+.set-nav{border-right:1px solid var(--line);padding:10px;overflow-y:auto;background:var(--sunk)}
+.set-nav button{display:block;width:100%;text-align:left;border:0;background:transparent;border-radius:var(--r-s);padding:8px 10px;cursor:pointer;margin-bottom:2px}
+.set-nav button:hover{background:var(--surface)}
+.set-nav button[aria-current="true"]{background:var(--surface);box-shadow:inset 3px 0 0 var(--track)}
+.set-nav .g{font-weight:600;font-size:14px;display:flex;justify-content:space-between;gap:8px}
+.set-nav .gh{font-size:12px;color:var(--muted);line-height:1.35;margin-top:2px}
+.changed-n{font-size:11px;font-weight:700;color:var(--track-ink);background:var(--track-soft);border-radius:999px;padding:0 7px}
+.set-pane{overflow-y:auto;padding:6px 26px 20px}
+.set-pane h4{font:600 18px var(--serif);margin:14px 0 2px}
+.set-pane .gdesc{margin:0 0 8px;color:var(--muted);font-size:13.5px}
+.set{display:grid;grid-template-columns:1fr auto;gap:4px 24px;padding:14px 0;border-bottom:1px solid var(--line);align-items:start}
+.set:last-child{border-bottom:0}
+.set .name{font-weight:600;font-size:14.5px;display:flex;align-items:center;gap:8px}
+.set .help{grid-column:1;font-size:13px;color:var(--muted);max-width:60ch}
+.set .ctl{grid-column:2;grid-row:1 / 3;display:flex;flex-direction:column;align-items:flex-end;gap:6px;min-width:180px}
+.set .ctl.wide{grid-column:1 / 3;grid-row:auto;align-items:stretch;min-width:0}
+.set .reset{border:0;background:transparent;color:var(--muted);font-size:12px;text-decoration:underline;cursor:pointer;padding:0}
+.set .changed{width:7px;height:7px;border-radius:50%;background:var(--track)}
+.set .ingroup{font-size:12px;color:var(--faint);font-weight:400}
+.seg{display:inline-flex;border:1px solid var(--line-strong);border-radius:var(--r-s);overflow:hidden}
+.seg button{border:0;background:var(--surface);padding:6px 12px;font-size:13.5px;cursor:pointer;color:var(--muted)}
+.seg button+button{border-left:1px solid var(--line-strong)}
+.seg button[aria-pressed="true"]{background:var(--ink);color:var(--bg)}
+.switch{position:relative;width:42px;height:24px;border-radius:999px;border:0;background:var(--line-strong);cursor:pointer;padding:0;flex:none}
+.switch::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:transform .15s}
+.switch[aria-checked="true"]{background:var(--ok)}
+.switch[aria-checked="true"]::after{transform:translateX(18px)}
+@media (prefers-reduced-motion: reduce){.switch::after{transition:none}}
+.checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:4px}
+.check{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--line);border-radius:var(--r-m);padding:10px 12px;cursor:pointer;background:var(--surface)}
+.check input{margin-top:3px;width:16px;height:16px;accent-color:var(--ok)}
+.check .cl{font-weight:600;font-size:14px}
+.check .ch{font-size:12.5px;color:var(--muted)}
+.check.fixed{background:var(--sunk);cursor:default}
+.no-hits{color:var(--muted);padding:24px 0}
+
+.toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:var(--r-m);font-size:14px;box-shadow:var(--shadow);z-index:50;max-width:80vw}
+.toast.bad{background:var(--err);color:#fff}
+
+@media (max-width: 1100px){ .work{grid-template-columns:1fr} .route{max-height:none} .panel{min-height:420px} }
+@media (max-width: 760px){ .shell{grid-template-columns:1fr} .rail{max-height:240px} .head,.tiers,.note,.work{padding-left:16px;padding-right:16px} .settings{width:100vw;height:100vh} .set-wrap{grid-template-columns:1fr} .set-nav{display:flex;overflow-x:auto;border-right:0;border-bottom:1px solid var(--line)} .set-nav button{width:auto;white-space:nowrap} .set-nav .gh{display:none} .checks{grid-template-columns:1fr} }
 </style>
 </head>
 <body>
-<header><h1 id="title">Thesis pipeline</h1><span class="sub" id="cwd"></span></header>
-<div class="wrap">
-  <div class="side">
-    <button class="primary" id="new-btn" style="width:100%;margin-bottom:8px">+ New project</button>
-    <button id="import-btn" style="width:100%">Import tier-1 output</button>
-    <h2>Projects</h2>
-    <div id="proj-list"></div>
-  </div>
-
-  <div class="main">
-    <div class="empty" id="no-sel">Create or import a project on the left. A project = tier 1 (data prep) → tier 2 (reference dataset), chained automatically.</div>
-    <div id="sel" style="display:none;flex:1;flex-direction:column;overflow:hidden;">
-      <div class="bar">
-        <span class="title" id="proj-name">—</span>
-        <button class="small" id="rename">Rename</button>
-        <button class="small" id="delete">Delete</button>
-      </div>
-      <div class="tiertabs">
-        <div class="tiertab active" data-tier="tier1" id="tt-tier1"></div>
-        <div class="tiertab" data-tier="tier2" id="tt-tier2"></div>
-      </div>
-
-      <div class="actions">
-        <button class="go small" id="run-all">▶ Run whole tier</button>
-        <button class="primary small" id="run-continue">⏵ Continue</button>
-        <span style="display:inline-flex;gap:6px;align-items:center;">
-          <button class="small" id="run-upto">⏭ Run up to</button>
-          <select id="upto-sel" style="width:auto"></select>
-        </span>
-        <span style="display:inline-flex;gap:6px;align-items:center;">
-          <button class="small" id="run-from">⟲ Redo from</button>
-          <select id="from-sel" style="width:auto"></select>
-          <label style="font-size:13px;display:inline-flex;gap:4px;align-items:center;"><input type="checkbox" id="from-clean" checked/> rebuild</label>
-        </span>
-        <button class="small" id="run-preview" style="display:none">🔎 Preview downloads</button>
-        <button class="small" id="run-setup">Setup deps</button>
-        <button class="small" id="stop" disabled>Stop</button>
-        <button class="small" id="edit-params">Edit parameters</button>
-      </div>
-      <div class="hintline" id="tier-hint"></div>
-
-      <div id="t2-selection" style="display:none;flex:none;border:1px solid var(--edge);border-radius:8px;margin:8px 20px;">
-        <div id="t2-sel-head" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:8px 10px;cursor:pointer;" title="click to fold/unfold">
-          <span id="t2-sel-caret" style="display:inline-block;width:12px;">▸</span>
-          <b>Reference set — what to include</b>
-          <span class="hint" id="t2-sel-count"></span>
-          <span style="flex:1"></span>
-          <button class="small" id="t2-sel-save">Save selection</button>
-        </div>
-        <div id="t2-sel-body" style="display:none;padding:0 10px 8px;">
-          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin:2px 0 6px;">
-            <label style="font-size:13px;display:inline-flex;gap:4px;align-items:center;"><input type="checkbox" id="t2-all-pkg" checked/> all packages</label>
-            <label style="font-size:13px;display:inline-flex;gap:4px;align-items:center;"><input type="checkbox" id="t2-all-deps" checked/> all deps</label>
-            <button class="small" id="t2-sel-refresh">Refresh</button>
-          </div>
-          <div class="hint" id="t2-sel-hint" style="margin:0 0 4px;">Default: everything that survived. Untick a package to drop it as a top-level anchor; untick its deps to skip its bundled dependencies. A dep still appears if another included package needs it.</div>
-          <div id="t2-sel-list" style="max-height:180px;overflow:auto;border-top:1px solid var(--edge);margin-top:4px;"></div>
-        </div>
-      </div>
-
-      <div class="statewrap">
-        <table><thead><tr><th>Step</th><th>Status</th><th>Started</th><th>Duration</th><th>Exit</th><th>Run</th><th>Log</th></tr></thead>
-        <tbody id="state-body"></tbody></table>
-      </div>
-
-      <div class="splitter" id="split" title="Drag to resize the log"></div>
-
-      <div class="subtabs">
-        <button class="subtab active" data-pane="logs">Live log</button>
-        <button class="subtab" data-pane="console">Console</button>
-        <button class="subtab" data-pane="outputs">Outputs</button>
-      </div>
-      <div class="pane active" id="pane-logs"><pre class="log" id="live-log"></pre></div>
-      <div class="pane" id="pane-console">
-        <pre class="log" id="con"></pre>
-        <div class="console-in"><input id="cmd" placeholder="bash command, runs in this tier's output folder" autocomplete="off"/><button class="primary" id="cmd-run">Run</button></div>
-      </div>
-      <div class="pane" id="pane-outputs">
-        <div class="bar"><span class="hint" id="out-path"></span><span style="flex:1"></span><button class="small" id="refresh-out">Refresh</button></div>
-        <div class="outs" id="outs"></div>
+<div class="shell">
+  <nav class="rail" aria-label="Projects">
+    <div class="brand"><h1>Thesis pipeline</h1></div>
+    <div class="rail-actions">
+      <button class="btn primary" id="new-btn">New project</button>
+      <button class="btn quiet" id="import-btn">Import a tier-1 output folder</button>
+    </div>
+    <div class="projects">
+      <h2>Projects</h2>
+      <div id="proj-list"></div>
+    </div>
+    <div class="rail-foot">
+      <span>Appearance</span>
+      <div class="theme" role="group" aria-label="Appearance">
+        <button data-theme="auto" aria-pressed="true" title="Follow the system">Auto</button>
+        <button data-theme="light" aria-pressed="false">Light</button>
+        <button data-theme="dark" aria-pressed="false">Dark</button>
       </div>
     </div>
-  </div>
+  </nav>
+
+  <main class="main">
+    <div class="empty" id="no-sel">
+      <h2>No project open</h2>
+      <p>A project runs tier 1 (the test bed of real bundles) and then tier 2 (the reference function dataset), which reads tier 1's output automatically.</p>
+      <p><button class="btn primary" id="new-btn-2">New project</button></p>
+    </div>
+
+    <div id="sel" hidden style="display:flex;flex-direction:column;flex:1;min-height:0">
+      <div class="head">
+        <h2 id="proj-name">—</h2>
+        <button class="btn" id="settings-btn">Settings</button>
+        <div class="menu">
+          <button class="btn quiet" id="more-btn" aria-haspopup="true" aria-expanded="false" title="More actions">More</button>
+          <div class="menu-list" id="more-menu" hidden role="menu">
+            <button role="menuitem" data-act="rename">Rename project</button>
+            <button role="menuitem" data-act="setup">Install the tier's dependencies</button>
+            <button role="menuitem" data-act="preview" data-tier2>Count the downloads (no download)</button>
+            <hr/>
+            <button role="menuitem" data-act="delete" class="danger">Delete project…</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="tiers" role="tablist" aria-label="Tier">
+        <button class="tier" role="tab" data-tier="tier1" id="tt-tier1"></button>
+        <button class="tier" role="tab" data-tier="tier2" id="tt-tier2"></button>
+      </div>
+      <div class="note" id="tier-note"></div>
+
+      <div class="work">
+        <section class="route" aria-label="Steps">
+          <ol id="route"></ol>
+          <div class="route-foot">
+            <button class="btn primary big" id="main-btn">Run</button>
+            <span class="why" id="main-why"></span>
+          </div>
+        </section>
+
+        <section class="panel" aria-label="Activity">
+          <div class="tabs" role="tablist">
+            <button class="tab" role="tab" data-pane="log" aria-selected="true">Log</button>
+            <button class="tab" role="tab" data-pane="files" aria-selected="false">Files</button>
+            <button class="tab" role="tab" data-pane="pkgs" aria-selected="false" id="pkgs-tab">Packages</button>
+            <button class="tab" role="tab" data-pane="console" aria-selected="false">Console</button>
+          </div>
+
+          <div class="pane" id="pane-log">
+            <div class="pane-bar"><span id="log-title">Live output</span><span class="grow"></span><button class="btn quiet" id="log-live" hidden>Back to live output</button></div>
+            <pre class="log" id="log" aria-live="polite"></pre>
+          </div>
+          <div class="pane" id="pane-files" hidden>
+            <div class="pane-bar"><span id="files-sum"></span><span class="grow"></span><button class="btn quiet" id="files-refresh">Refresh</button></div>
+            <div class="files" id="files"></div>
+          </div>
+          <div class="pane" id="pane-pkgs" hidden>
+            <div class="pane-bar">
+              <span id="pkgs-sum">Packages tier 1 selected, and their bundled dependencies</span><span class="grow"></span>
+              <button class="btn quiet" id="pkgs-all">Include everything</button>
+              <button class="btn" id="pkgs-save" disabled>Save selection</button>
+            </div>
+            <div class="pkgs" id="pkgs"></div>
+          </div>
+          <div class="pane" id="pane-console" hidden>
+            <div class="pane-bar">Runs a shell command in this tier's output folder.</div>
+            <pre class="log" id="con"></pre>
+            <div class="console-in"><input type="text" id="cmd" placeholder="e.g. ls -la" autocomplete="off" aria-label="Command"/><button class="btn primary" id="cmd-run">Run</button></div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
 </div>
 
-<dialog id="new-dlg">
-  <h2 style="margin-top:0" id="dlg-title">New project</h2>
-  <div class="field"><label>Project name</label><input id="n-name" placeholder="e.g. top-1500 sample-14"/></div>
-  <div class="field" id="import-path-field" style="display:none"><label>Existing tier-1 output folder (absolute path)</label><input id="n-path" placeholder="/path/to/first-pipeline/output"/></div>
-  <h2 id="t1-head">Tier 1 parameters</h2>
-  <div id="t1-params"></div>
-  <p class="hint">Tier 2's parameters are set later, once tier 1 has produced output (its input is wired automatically).</p>
-  <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px"><button id="n-cancel">Cancel</button><button class="primary" id="n-create">Create</button></div>
+<!-- settings: groups on the left, search across all, one group at a time on the right -->
+<dialog id="set-dlg" class="settings" aria-labelledby="set-title">
+  <div class="dlg-head">
+    <h3 id="set-title">Settings</h3>
+    <input type="search" id="set-search" placeholder="Find a setting" aria-label="Find a setting"/>
+  </div>
+  <div class="dlg-body" id="set-extra" hidden></div>
+  <div class="set-wrap">
+    <div class="set-nav" id="set-nav"></div>
+    <div class="set-pane" id="set-pane"></div>
+  </div>
+  <div class="dlg-foot">
+    <span class="left" id="set-status"></span>
+    <button class="btn" id="set-cancel">Cancel</button>
+    <button class="btn primary" id="set-save">Save changes</button>
+  </div>
 </dialog>
 
-<dialog id="params-dlg">
-  <h2 style="margin-top:0" id="pd-title">Edit parameters</h2>
-  <div id="pd-params"></div>
-  <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px"><button id="pd-cancel">Cancel</button><button class="primary" id="pd-save">Save</button></div>
+<!-- small ask/confirm dialog -->
+<dialog id="ask-dlg" class="small-dlg">
+  <div class="dlg-head"><h3 id="ask-title"></h3></div>
+  <div class="dlg-body" id="ask-body"></div>
+  <div class="dlg-foot"><button class="btn" id="ask-no">Cancel</button><button class="btn primary" id="ask-yes">OK</button></div>
 </dialog>
 
 <script>
-const $=(s)=>document.querySelector(s);
-let CFG=null, PROJ=null, TIER="tier1", es=null, IMPORT=false;
-const esc=(s)=>String(s).replace(/[&<>]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
-const fmtTime=(iso)=>iso?new Date(iso).toLocaleTimeString():"—";
-const fmtDur=(ms)=>ms==null?"—":ms<1000?ms+"ms":(ms/1000).toFixed(1)+"s";
-const fmtBytes=(n)=>n<1024?n+" B":n<1048576?(n/1024).toFixed(1)+" KB":(n/1048576).toFixed(1)+" MB";
+"use strict";
+const $=(s,r=document)=>r.querySelector(s), $$=(s,r=document)=>[...r.querySelectorAll(s)];
+const esc=(s)=>String(s??"").replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const api=async(path,opt)=>{ const r=await fetch(path,opt?{method:opt.method||"POST",headers:{"content-type":"application/json"},body:opt.body!==undefined?JSON.stringify(opt.body):undefined}:undefined); return r.json().catch(()=>({error:"no response"})); };
+const fmtDur=(ms)=>{ if(ms==null)return ""; const s=Math.round(ms/1000); if(s<60)return s+" s"; const m=Math.floor(s/60); if(m<60)return m+" min "+(s%60)+" s"; return Math.floor(m/60)+" h "+(m%60)+" min"; };
+const fmtBytes=(n)=>n<1024?n+" B":n<1048576?(n/1024).toFixed(1)+" KB":n<1073741824?(n/1048576).toFixed(1)+" MB":(n/1073741824).toFixed(2)+" GB";
+const fmtWhen=(iso)=>{ if(!iso)return ""; const d=new Date(iso); const today=new Date().toDateString()===d.toDateString(); return today?d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}):d.toLocaleDateString([], {day:"numeric",month:"short"})+" "+d.toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"}); };
+const STATUS_TEXT={pending:"Not run",running:"Running",done:"Done",imported:"Imported",error:"Failed"};
+const STATUS_MARK={done:"✓",imported:"✓",error:"✕"};
+const DONE=(s)=>s==="done"||s==="imported";
 
-fetch("/api/config").then(r=>r.json()).then(c=>{CFG=c;$("#cwd").textContent=c.cwd;if(c.title){$("#title").textContent=c.title;document.title=c.title;}refreshProjects();});
+let CFG=null, PROJ=null, PR=null, TIER="tier1", ES=null, SEL_STEP=null, VIEWING=null, PANE="log";
 
-// ---- param form builder ----
-function buildParamFields(box, params, cur){ box.innerHTML="";
-  for(const p of params){ const id=box.id+"-"+p.key; const w=document.createElement("div"); w.className="field"+(p.type==="bool"?" bool":"");
-    w.dataset.key=p.key; w.dataset.modes=(p.modes||[]).join(",");
-    const v = cur?cur[p.key]:p.default;
-    if(p.type==="bool") w.innerHTML=`<input type="checkbox" id="${id}" ${v==="1"?"checked":""}/><label for="${id}">${p.label}</label>`;
-    else if(p.type==="select") w.innerHTML=`<label for="${id}">${p.label}</label><select id="${id}">`+p.options.map(o=>`<option ${o===v?"selected":""}>${o}</option>`).join("")+`</select>`;
-    else w.innerHTML=`<label for="${id}">${p.label}</label><input id="${id}" value="${esc(v??"")}"/>`;
-    box.appendChild(w); }
-  // mode-aware visibility: hide params whose `modes` list excludes the current MODE
-  const modeSel=document.getElementById(box.id+"-MODE");
-  const apply=()=>{ const mode=modeSel?modeSel.value:(cur?cur.MODE:null)||"expensive";
-    for(const w of box.children){ const m=(w.dataset.modes||"").split(",").filter(Boolean);
-      w.style.display=(m.length===0||m.includes(mode))?"":"none"; } };
-  if(modeSel) modeSel.addEventListener("change",apply);
-  apply();
-}
-function readParamFields(boxId, params){ const v={}; for(const p of params){const el=document.getElementById(boxId+"-"+p.key); if(!el)continue; v[p.key]=p.type==="bool"?(el.checked?"1":"0"):el.value;} return v; }
+// ---------- toast ----------
+let toastT=null;
+function toast(msg,bad){ let t=$(".toast"); if(!t){t=document.createElement("div");t.className="toast";t.setAttribute("role","status");document.body.appendChild(t);} t.textContent=msg; t.classList.toggle("bad",!!bad); clearTimeout(toastT); toastT=setTimeout(()=>t.remove(),bad?6000:3000); }
 
-// ---- new / import project ----
-function openNew(isImport){ IMPORT=isImport; $("#dlg-title").textContent=isImport?"Import tier-1 output":"New project";
-  $("#import-path-field").style.display=isImport?"block":"none";
-  $("#t1-head").style.display=isImport?"none":"block"; $("#t1-params").style.display=isImport?"none":"block";
-  $("#n-name").value=""; $("#n-path").value="";
-  if(!isImport) buildParamFields($("#t1-params"), CFG.tiers.tier1.params, null);
-  $("#new-dlg").showModal();
-}
-$("#new-btn").onclick=()=>openNew(false);
-$("#import-btn").onclick=()=>openNew(true);
-$("#n-cancel").onclick=()=>$("#new-dlg").close();
-$("#n-create").onclick=async()=>{
-  let proj;
-  if(IMPORT){ proj=await fetch("/api/projects/import",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name:$("#n-name").value,externalOutput:$("#n-path").value})}).then(r=>r.json());
-    if(proj.error){alert(proj.error);return;} if(proj.warning)alert(proj.warning); }
-  else { proj=await fetch("/api/projects",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name:$("#n-name").value,tier1Params:readParamFields("t1-params",CFG.tiers.tier1.params)})}).then(r=>r.json()); }
-  $("#new-dlg").close(); await refreshProjects(); selectProject(proj.slug, IMPORT?"tier2":"tier1");
-};
+// ---------- theme ----------
+function setTheme(t){ try{localStorage.setItem("theme",t);}catch{} if(t==="auto")document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme",t); $$(".theme button").forEach(b=>b.setAttribute("aria-pressed",String(b.dataset.theme===t))); }
+$$(".theme button").forEach(b=>b.onclick=()=>setTheme(b.dataset.theme));
+try{ setTheme(localStorage.getItem("theme")||"auto"); }catch{ setTheme("auto"); }
 
-// ---- projects list ----
-async function refreshProjects(){ const list=await fetch("/api/projects").then(r=>r.json()); const box=$("#proj-list");
-  if(!list.length){box.innerHTML='<div class="hint">No projects yet.</div>';return;}
+// ---------- ask / confirm ----------
+function ask({title,body,yes="OK",danger=false,input=null}){ return new Promise(res=>{
+  const d=$("#ask-dlg"); $("#ask-title").textContent=title; const b=$("#ask-body"); b.innerHTML="";
+  if(body){ const p=document.createElement("div"); p.innerHTML=body; b.appendChild(p); }
+  let inp=null; if(input){ inp=document.createElement("input"); inp.type="text"; inp.value=input.value||""; inp.placeholder=input.placeholder||""; inp.setAttribute("aria-label",title); inp.style.margin="6px 0 10px"; b.appendChild(inp); }
+  const y=$("#ask-yes"); y.textContent=yes; y.className="btn "+(danger?"stop":"primary");
+  const done=(v)=>{ d.close(); res(v); };
+  y.onclick=()=>done(inp?inp.value.trim():true); $("#ask-no").onclick=()=>done(null); d.oncancel=()=>res(null);
+  d.showModal(); (inp||y).focus(); if(inp){inp.select(); inp.onkeydown=e=>{if(e.key==="Enter")y.click();};}
+}); }
+
+// ---------- boot ----------
+api("/api/config").then(c=>{ CFG=c; refreshProjects(); const last=(()=>{try{return localStorage.getItem("proj");}catch{return null;}})(); if(last) selectProject(last, (()=>{try{return localStorage.getItem("tier")}catch{return null}})()||"tier1", true); });
+
+// ---------- projects ----------
+async function refreshProjects(){
+  const list=await api("/api/projects"); const box=$("#proj-list");
+  if(!Array.isArray(list)||!list.length){ box.innerHTML='<p style="color:var(--muted);font-size:13px;margin:0 8px">No projects yet.</p>'; return list; }
   box.innerHTML="";
-  for(const pr of list){ const d=document.createElement("div"); d.className="proj"+(PROJ===pr.slug?" sel":"");
-    d.innerHTML=`<div class="nm">${esc(pr.name)}</div>`+["tier1","tier2"].map(t=>{
-      const ids=CFG.tiers[t].stepIds; const done=ids.filter(s=>["done","imported"].includes(pr[t].steps[s]?.status)).length;
-      const dots=ids.map(s=>`<span class="dot ${pr[t].steps[s]?.status||"pending"}"></span>`).join("");
-      return `<div class="row"><b>${t==="tier1"?"T1":"T2"}</b><span class="dots">${dots}</span><span>${done}/${ids.length}</span></div>`;
-    }).join("");
-    d.onclick=()=>selectProject(pr.slug, TIER); box.appendChild(d);
+  for(const pr of list){
+    const b=document.createElement("button"); b.className="proj"; b.setAttribute("aria-current",String(PROJ===pr.slug));
+    b.innerHTML=`<div class="nm">${esc(pr.name)}</div>`+["tier1","tier2"].map(t=>{ const st=pr.view[t].steps; const n=st.filter(s=>DONE(s.status)).length;
+      return `<div class="mini"><span>${t==="tier1"?"T1":"T2"}</span><span class="minibar" aria-hidden="true">${st.map(s=>`<i class="${s.status||"pending"}"></i>`).join("")}</span><span>${n}/${st.length}</span></div>`; }).join("");
+    b.setAttribute("aria-label",`${pr.name}: tier 1 ${pr.view.tier1.steps.filter(s=>DONE(s.status)).length} of ${pr.view.tier1.steps.length} steps done, tier 2 ${pr.view.tier2.steps.filter(s=>DONE(s.status)).length} of ${pr.view.tier2.steps.length}`);
+    b.onclick=()=>selectProject(pr.slug, TIER);
+    const item=document.createElement("div"); item.className="proj-item"+(PROJ===pr.slug?" open":"");
+    const del=document.createElement("button"); del.className="proj-del"; del.textContent="Delete"; del.setAttribute("aria-label",`Delete project ${pr.name}`);
+    del.onclick=(e)=>{ e.stopPropagation(); deleteProject(pr.slug, pr.name, pr); };
+    item.append(b, del); box.appendChild(item);
   }
+  return list;
 }
 
-// ---- select project / tier ----
-async function selectProject(slug, tier){ PROJ=slug; TIER=tier||"tier1"; $("#no-sel").style.display="none"; $("#sel").style.display="flex";
-  await renderProject(); refreshProjects(); openStream();
+async function selectProject(slug,tier,quiet){
+  const pr=await api("/api/project?slug="+encodeURIComponent(slug)); if(pr.error){ if(!quiet)toast(pr.error,true); return; }
+  PROJ=slug; TIER=tier==="tier2"?"tier2":"tier1"; SEL_STEP=null; VIEWING=null;
+  try{localStorage.setItem("proj",slug);localStorage.setItem("tier",TIER);}catch{}
+  $("#no-sel").hidden=true; $("#sel").hidden=false;
+  PR=pr; render(); refreshProjects(); openStream();
 }
-function openStream(){ if(es)es.close(); $("#live-log").textContent=""; es=new EventSource(`/api/project/stream?slug=${PROJ}&tier=${TIER}`);
-  es.onmessage=(ev)=>{const e=JSON.parse(ev.data);
-    if(e.type==="line"){const sp=document.createElement("span");sp.className=e.stream==="err"?"err":e.stream==="meta"?"meta":"";sp.textContent=e.text+"\n";const L=$("#live-log");L.appendChild(sp);L.scrollTop=L.scrollHeight;}
-    else if(e.type==="step"){renderProject();refreshProjects();const L=$("#live-log");const sp=document.createElement("span");sp.className="step";sp.textContent=`\n[${e.step}] ${e.status}\n`;L.appendChild(sp);L.scrollTop=L.scrollHeight;}
-    else if(e.type==="run"){renderProject();refreshProjects();}
+
+// ---------- render the open project ----------
+function view(){ return PR.view[TIER]; }
+function busy(){ return view().steps.some(s=>s.status==="running"); }
+function firstUnfinished(){ return view().steps.find(s=>!DONE(s.status)); }
+
+async function reload(){ if(!PROJ)return; const pr=await api("/api/project?slug="+encodeURIComponent(PROJ)); if(!pr.error){ PR=pr; render(); } refreshProjects(); }
+
+function render(){
+  $("#proj-name").textContent=PR.name;
+  for(const t of ["tier1","tier2"]){ const v=PR.view[t]; const n=v.steps.filter(s=>DONE(s.status)).length; const run=v.steps.find(s=>s.status==="running");
+    const el=$("#tt-"+t); el.setAttribute("aria-selected",String(TIER===t));
+    el.innerHTML=`<div class="t">${esc(CFG.tiers[t].title.replace(/^Tier \d · /,`Tier ${t.slice(-1)}: `))}</div><div class="s">${run?`Running step ${esc(run.num)}`:`${n} of ${v.steps.length} steps done`}${t==="tier2"?` · ${v.mode} mode`:(PR.tier1.externalOutput?" · imported":"")}</div>`; }
+  // note under the tiers
+  const note=$("#tier-note");
+  if(TIER==="tier2"){ const t1done=PR.view.tier1.steps.every(s=>DONE(s.status));
+    note.innerHTML=`Reads tier 1's output automatically. `+(t1done?`<b>Tier 1 is complete.</b>`:`<span class="warn">Tier 1 isn't finished yet — run or import it first.</span>`)+(view().mode==="streamed"?` Streamed mode keeps ${keepSummary()} and deletes the rest as each package finishes.`:""); }
+  else note.innerHTML = PR.tier1.externalOutput ? `Tier 1's output was imported from <b>${esc(PR.tier1.externalOutput)}</b>.` : `Bundles are the test bed: they are always kept, and a clean redo moves old ones to <b>_archived_bundles</b> instead of deleting them.`;
+  $("#pkgs-tab").hidden = TIER!=="tier2";
+  $$("[data-tier2]").forEach(b=>b.hidden=TIER!=="tier2");
+  if(TIER!=="tier2" && PANE==="pkgs") showPane("log");
+  renderRoute();
+}
+function keepSummary(){ const k=String(PR.tier2.params.KEEP_ARTIFACTS||"").split(",").map(s=>s.trim()).filter(Boolean);
+  const opt=(CFG.tiers.tier2.params.find(p=>p.key==="KEEP_ARTIFACTS")||{}).options||[];
+  if(k.includes("all")) return "every intermediate file and the logs";
+  const names=k.map(v=>(opt.find(o=>o.value===v)||{label:v}).label.toLowerCase());
+  return names.length?`the logs and ${names.join(", ")}`:"only the logs and the final function collection"; }
+
+function renderRoute(){
+  const ol=$("#route"); ol.innerHTML=""; const isBusy=busy();
+  for(const s of view().steps){
+    const li=document.createElement("li"); li.className="step-row "+(s.status||"pending"); li.setAttribute("aria-current",String(SEL_STEP===s.id));
+    const when = s.status==="running" ? `started ${fmtWhen(s.startedAt)}` : (s.finishedAt?`${fmtWhen(s.finishedAt)}${s.durationMs!=null?`, took ${fmtDur(s.durationMs)}`:""}`:"");
+    li.innerHTML=`<span class="dot" aria-hidden="true">${STATUS_MARK[s.status]||""}</span>
+      <button class="step" aria-expanded="${SEL_STEP===s.id}">
+        <span class="num">${esc(s.num)}</span><span class="lbl">${esc(s.label)}</span><span class="st ${s.status||"pending"}">${STATUS_TEXT[s.status]||"Not run"}</span>
+        ${when||s.note?`<span class="sub">${esc([when,s.note].filter(Boolean).join(" — "))}</span>`:""}
+      </button>`;
+    li.querySelector(".step").onclick=()=>{ SEL_STEP = SEL_STEP===s.id?null:s.id; renderRoute(); if(SEL_STEP) showStepLog(s); };
+    if(SEL_STEP===s.id){
+      const a=document.createElement("div"); a.className="step-actions";
+      a.innerHTML=`<button class="btn" data-a="one" ${isBusy?"disabled":""}>Run this step</button>
+        <button class="btn" data-a="upto" ${isBusy?"disabled":""}>Run up to here</button>
+        <button class="btn" data-a="from" ${isBusy?"disabled":""}>Redo from here…</button>${isBusy?'<label>Available once the running step finishes or is stopped.</label>':""}`;
+      a.querySelector('[data-a="one"]').onclick=()=>run(s.id);
+      a.querySelector('[data-a="upto"]').onclick=()=>run("upto:"+s.id);
+      a.querySelector('[data-a="from"]').onclick=()=>redoFrom(s);
+      li.appendChild(a);
+    }
+    ol.appendChild(li);
+  }
+  // the one main button
+  const btn=$("#main-btn"), why=$("#main-why"); const f=firstUnfinished(); const anyDone=view().steps.some(s=>DONE(s.status));
+  if(isBusy){ btn.textContent="Stop"; btn.className="btn stop big"; btn.onclick=stop; why.textContent="Stopping ends the current step; finished work is kept."; }
+  else if(!f){ btn.textContent="All steps done"; btn.className="btn big"; btn.disabled=true; why.textContent="To run again, open a step and choose Redo from here."; return; }
+  else { btn.textContent = anyDone?`Continue from step ${f.num}`:"Run the whole tier"; btn.className="btn primary big"; btn.onclick=()=>run("continue");
+    why.textContent = f.status==="error" ? `Step ${f.num} failed last time; continuing runs it again.` : (TIER==="tier2"&&!PR.view.tier1.steps.every(s=>DONE(s.status)) ? "Tier 1 has to finish first." : ""); }
+  btn.disabled=false;
+}
+
+// ---------- running ----------
+async function run(step,extra){ if(step!=="setup"&&step!=="preview"){ SEL_STEP=null; } VIEWING=null; showPane("log"); const r=await api("/api/project/run",{body:{slug:PROJ,tier:TIER,step,...(extra||{})}}); if(r.error) toast(r.error,true); else if(r.nothing) toast("Nothing to run."); }
+async function stop(){ const r=await api("/api/project/stop",{body:{slug:PROJ,tier:TIER}}); if(r.error) toast(r.error,true); }
+async function redoFrom(s){
+  const later=view().steps.slice(view().steps.indexOf(s)).map(x=>x.num).join(", ");
+  const protectedNote = TIER==="tier1" ? "<p style='color:var(--muted);font-size:13px'>Bundles are never deleted: they are moved to <b>_archived_bundles</b>.</p>" : "";
+  const d=$("#ask-dlg");
+  const ok=await ask({title:`Redo from step ${s.num}`, body:`<p>Runs steps ${esc(later)} again with the current settings.</p>
+      <label style="display:flex;gap:8px;align-items:center;margin:8px 0"><input type="checkbox" id="redo-clean" checked/> Clear their output first, so the new settings take effect</label>${protectedNote}`, yes:"Redo"});
+  if(!ok)return; const clean=!!(d.querySelector("#redo-clean")||{}).checked;
+  run("from:"+s.id,{clean});
+}
+$("#main-btn").onclick=()=>run("continue");
+
+// ---------- live stream ----------
+// A log view that never blocks the page: lines are queued and written at most once per frame,
+// consecutive lines of the same kind become one text block, and only the last ~400 KB of text
+// is kept on screen. Scroll position is read once per frame, not once per line.
+function makeLog(el, maxChars=400000){
+  let q=[], raf=0; const nodes=[]; let total=0;
+  const stick=()=>el.scrollHeight-el.scrollTop-el.clientHeight<60;
+  function flush(){
+    raf=0; if(!q.length) return;
+    let batch=q; q=[];
+    // keep only the tail that can be shown at all (a little under the cap, so nothing is trimmed straight away)
+    let n=0, i=batch.length; while(i>0 && n<maxChars*0.9){ i--; n+=batch[i][0].length+1; } batch=batch.slice(i);
+    const atBottom=stick(); const frag=document.createDocumentFragment();
+    let buf="", cls=null;
+    const put=()=>{ if(!buf)return; const node=cls?Object.assign(document.createElement("span"),{className:cls,textContent:buf}):document.createTextNode(buf); frag.appendChild(node); nodes.push([node,buf.length]); total+=buf.length; buf=""; };
+    // blocks of at most 16 KB, so trimming the oldest text never removes more than a small piece
+    for(const [t,c] of batch){ if(c!==cls||buf.length>16384){ put(); cls=c; } buf+=t+"\n"; }
+    put(); el.appendChild(frag);
+    while(total>maxChars && nodes.length>1){ const [node,len]=nodes.shift(); node.remove(); total-=len; }
+    if(atBottom) el.scrollTop=el.scrollHeight;
+  }
+  return {
+    push(text,cls=""){ q.push([text,cls]); if(q.length>60000) q=q.slice(-30000); if(!raf) raf=requestAnimationFrame(flush); },
+    clear(){ q=[]; nodes.length=0; total=0; el.textContent=""; },
+    set(text){ this.clear(); el.textContent=text; },
   };
 }
-function selectTier(t){ TIER=t; document.querySelectorAll(".tiertab").forEach(x=>x.classList.toggle("active",x.dataset.tier===t)); renderProject(); openStream(); }
-document.querySelectorAll(".tiertab").forEach(x=>x.onclick=()=>selectTier(x.dataset.tier));
+const LOG=makeLog($("#log")), CON=makeLog($("#con"));
+let reloadT=0; const reloadSoon=()=>{ clearTimeout(reloadT); reloadT=setTimeout(reload,250); }; // one refresh for a burst of step events
 
-async function renderProject(){ const pr=await fetch("/api/project?slug="+PROJ).then(r=>r.json()); if(pr.error)return;
-  $("#proj-name").textContent=pr.name;
-  for(const t of ["tier1","tier2"]){ const T=CFG.tiers[t]; const done=T.stepIds.filter(s=>["done","imported"].includes(pr[t].steps[s]?.status)).length;
-    const dots=T.stepIds.map(s=>`<span class="dot ${pr[t].steps[s]?.status||"pending"}"></span>`).join("");
-    $("#tt-"+t).innerHTML=`<div class="tt">${T.title}</div><div class="ts">${T.subtitle}</div><div class="pg"><span class="dots">${dots}</span> <span class="hint">${done}/${T.stepIds.length}</span></div>`;
-  }
-  const T=CFG.tiers[TIER]; const steps=pr[TIER].steps; const body=$("#state-body"); body.innerHTML="";
-  const mode=(pr[TIER].params && pr[TIER].params.MODE) || "expensive";
-  for(const s of T.stepIds){ const st=steps[s]||{status:"pending"};
-    const rawLabel=(T.stepLabels && T.stepLabels[mode] && T.stepLabels[mode][s]) || (T.steps.find(x=>x.id===s)?.label) || s;
-    const label=rawLabel.replace(/^\d+\s*·\s*/,"");
-    const tr=document.createElement("tr");
-    tr.innerHTML=`<td><b>${s}</b> ${esc(label)}</td><td><span class="badge ${st.status}">${st.status}</span></td><td>${fmtTime(st.startedAt)}</td><td>${fmtDur(st.durationMs)}</td><td>${st.exitCode==null?"—":st.exitCode}</td><td><button class="small step-run" data-step="${s}">Run</button></td><td><button class="small" data-log="${s}">View</button></td>`;
-    body.appendChild(tr);
-  }
-  body.querySelectorAll(".step-run").forEach(b=>b.onclick=()=>{switchPane("logs");run(b.dataset.step);});
-  body.querySelectorAll("[data-log]").forEach(b=>b.onclick=()=>viewLog(b.dataset.log));
-  const upsel=$("#upto-sel"); upsel.innerHTML=T.stepIds.map(s=>`<option value="${s}">step ${s}</option>`).join(""); upsel.value=T.stepIds[T.stepIds.length-1];
-  const fromsel=$("#from-sel"); fromsel.innerHTML=T.stepIds.map(s=>`<option value="${s}">step ${s}</option>`).join(""); fromsel.value=T.stepIds[0];
-  $("#run-preview").style.display = (TIER==="tier2") ? "" : "none";
-  $("#t2-selection").style.display = (TIER==="tier2") ? "" : "none";
-  if(TIER==="tier2") loadT2Selection();
-  // hint
-  if(TIER==="tier2"){ const t1done=CFG.tiers.tier1.stepIds.every(s=>["done","imported"].includes(pr.tier1.steps[s]?.status));
-    $("#tier-hint").innerHTML = `Input is wired automatically to tier 1's output — no directory needed. `+(t1done?'<span style="color:var(--ok)">Tier 1 is complete.</span>':'<span style="color:var(--run)">Tier 1 is not finished yet; run or import it first.</span>'); }
-  else $("#tier-hint").textContent = pr.tier1.externalOutput ? ("Tier 1 output imported from: "+pr.tier1.externalOutput) : "";
-  $("#out-path").textContent = "Files under this tier's output folder";
-  const busy=T.stepIds.some(s=>steps[s]?.status==="running"); setBusy(busy);
+function openStream(){
+  if(ES)ES.close(); LOG.clear(); $("#log-title").textContent="Live output"; $("#log-live").hidden=true;
+  ES=new EventSource(`/api/project/stream?slug=${encodeURIComponent(PROJ)}&tier=${TIER}`);
+  // the server replays its whole buffer on every (re)connect, so start from empty each time
+  ES.onopen=()=>{ if(!VIEWING) LOG.clear(); };
+  ES.onmessage=(ev)=>{ const e=JSON.parse(ev.data);
+    if(e.type==="line"){ if(VIEWING)return; appendLog(e.text, e.stream==="err"?"err":e.stream==="meta"?"meta":""); }
+    else if(e.type==="step"){ if(!VIEWING) appendLog(`\n── ${e.label}: ${STATUS_TEXT[e.status]||e.status}${e.code!=null&&e.status!=="running"?` (exit ${e.code})`:""}\n`,"mark"); reloadSoon(); }
+    else if(e.type==="run"){ reloadSoon(); }
+  };
 }
-function setBusy(b){ $("#stop").disabled=!b; ["run-all","run-continue","run-setup","run-upto","run-from","run-preview"].forEach(i=>{const el=$("#"+i);if(el)el.disabled=b;}); document.querySelectorAll(".step-run").forEach(x=>x.disabled=b); }
-
-async function run(step,extra){ await fetch("/api/project/run",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({slug:PROJ,tier:TIER,step,...(extra||{})})}); }
-$("#run-all").onclick=()=>{switchPane("logs");run("all");};
-$("#run-continue").onclick=()=>{switchPane("logs");run("continue");};
-$("#run-upto").onclick=()=>{switchPane("logs");run("upto:"+$("#upto-sel").value);};
-$("#run-from").onclick=()=>{const s=$("#from-sel").value;const clean=$("#from-clean").checked;
-  if(!confirm(`Re-run from step ${s} to the end with the current parameters`+(clean?`, rebuilding (deleting) the output of step ${s} onward?`:`?`)))return;
-  switchPane("logs");run("from:"+s,{clean});};
-$("#run-setup").onclick=()=>{switchPane("logs");run("setup");};
-$("#run-preview").onclick=()=>{switchPane("logs");$("#live-log").textContent="";run("preview");};
-
-// ---- tier-2 inclusion selection ----
-let T2ITEMS=[];
-async function loadT2Selection(){
-  const r=await fetch("/api/project/tier2-items?slug="+PROJ).then(r=>r.json()).catch(()=>({ready:false,items:[]}));
-  const list=$("#t2-sel-list");
-  if(!r.ready){ list.innerHTML='<div class="hint" style="padding:8px">Run tier 1 first — the survived packages appear here once it has produced output.</div>'; T2ITEMS=[]; return; }
-  T2ITEMS=r.items; const sel=r.selection||{};
-  const nSel=Object.keys(sel).length;
-  $("#t2-sel-count").textContent = `· ${r.items.length} packages`+(nSel?` · ${nSel} customised`:``);
-  const inc=(n)=>sel[n]?sel[n].include!==false:true; const wd=(n)=>sel[n]?sel[n].withDeps!==false:true;
-  list.innerHTML=r.items.map(it=>{
-    const n=esc(it.name);
-    return `<div class="t2row" data-name="${n}" style="display:flex;gap:10px;align-items:center;padding:3px 4px;border-bottom:1px solid rgba(255,255,255,.05)">
-      <label style="display:inline-flex;gap:4px;align-items:center;min-width:220px;flex:1"><input type="checkbox" class="t2-inc" ${inc(it.name)?"checked":""}/> <span>${n}${it.version?` <span class="hint">@${esc(it.version)}</span>`:""}</span></label>
-      <label style="display:inline-flex;gap:4px;align-items:center;font-size:13px" title="include this package's bundled dependencies"><input type="checkbox" class="t2-wd" ${wd(it.name)?"checked":""} ${it.depCount?"":"disabled"}/> deps (${it.depCount})</label>
-    </div>`;
-  }).join("");
-  syncMasters();
+function appendLog(text,cls){ LOG.push(text,cls); }
+async function showStepLog(s){
+  if(s.status==="running"){ backToLive(); return; }
+  showPane("log"); VIEWING=s.id; const r=await api(`/api/project/log?slug=${encodeURIComponent(PROJ)}&tier=${TIER}&step=${s.id}`);
+  LOG.set(r.text ? (r.truncated ? `… showing the last ${fmtBytes(r.text.length)} of ${fmtBytes(r.size)}. The full log is ${r.path}\n\n` : "")+r.text : (s.status==="pending" ? `Step ${s.num} has not been run yet.` : `No saved log for step ${s.num}.`));
+  $("#log-title").textContent=`Saved log of step ${s.num}: ${s.label}`; $("#log-live").hidden=false;
 }
-function syncMasters(){
-  const incs=[...document.querySelectorAll(".t2-inc")], wds=[...document.querySelectorAll(".t2-wd:not([disabled])")];
-  $("#t2-all-pkg").checked = incs.length>0 && incs.every(c=>c.checked);
-  $("#t2-all-deps").checked = wds.length>0 && wds.every(c=>c.checked);
+function backToLive(){ VIEWING=null; openStream(); }
+$("#log-live").onclick=backToLive;
+
+// ---------- panes ----------
+function showPane(name){ PANE=name; $$(".tab").forEach(t=>t.setAttribute("aria-selected",String(t.dataset.pane===name))); for(const p of ["log","files","pkgs","console"]) $("#pane-"+p).hidden=p!==name; if(name==="files")loadFiles(); if(name==="pkgs")loadPkgs(); }
+$$(".tab").forEach(t=>t.onclick=()=>showPane(t.dataset.pane));
+
+// files, grouped by top folder
+const KEPT_ALWAYS=/^(03_bundles_minified|05_selected_bundles|_archived_bundles)$/;
+async function loadFiles(){
+  const rows=await api(`/api/project/outputs?slug=${encodeURIComponent(PROJ)}&tier=${TIER}`); const box=$("#files");
+  if(!Array.isArray(rows)||!rows.length){ box.innerHTML='<p style="color:var(--muted)">No output yet. Run a step and its files appear here.</p>'; $("#files-sum").textContent=""; return; }
+  const groups=new Map(); for(const r of rows){ const top=r.path.includes("/")?r.path.split("/")[0]:"(top level)"; if(!groups.has(top))groups.set(top,[]); groups.get(top).push(r); }
+  const total=rows.reduce((a,r)=>a+r.bytes,0); $("#files-sum").textContent=`${rows.length}${rows.length>=500?"+":""} files, ${fmtBytes(total)}${rows.length>=500?" (first 500 listed)":""}`;
+  box.innerHTML=[...groups].map(([g,rs])=>`<details><summary><span class="n">${esc(g)}</span>${TIER==="tier1"&&KEPT_ALWAYS.test(g)?'<span class="tag">always kept</span>':""}<span class="m">${rs.length} file${rs.length===1?"":"s"}, ${fmtBytes(rs.reduce((a,r)=>a+r.bytes,0))}</span></summary>${rs.map(r=>`<div class="row"><span title="${esc(r.path)}">${esc(g==="(top level)"?r.path:r.path.slice(g.length+1))}</span><span>${fmtBytes(r.bytes)}</span></div>`).join("")}</details>`).join("");
 }
-$("#t2-all-pkg").onchange=e=>{document.querySelectorAll(".t2-inc").forEach(c=>c.checked=e.target.checked);};
-$("#t2-all-deps").onchange=e=>{document.querySelectorAll(".t2-wd:not([disabled])").forEach(c=>c.checked=e.target.checked);};
-$("#t2-sel-list").onchange=e=>{ if(e.target.classList.contains("t2-inc")||e.target.classList.contains("t2-wd")) syncMasters(); };
-$("#t2-sel-head").onclick=(e)=>{ if(e.target.closest("#t2-sel-save"))return; const b=$("#t2-sel-body"),open=b.style.display==="none"; b.style.display=open?"block":"none"; $("#t2-sel-caret").textContent=open?"▾":"▸"; };
-$("#t2-sel-refresh").onclick=(e)=>{e.stopPropagation();loadT2Selection();};
-$("#t2-sel-save").onclick=async(e)=>{ if(e&&e.stopPropagation)e.stopPropagation();
-  const selection={};
-  for(const row of document.querySelectorAll(".t2row")){
-    const name=row.dataset.name;
-    const include=row.querySelector(".t2-inc").checked;
-    const wdEl=row.querySelector(".t2-wd"); const withDeps=wdEl.disabled?true:wdEl.checked;
-    if(!include||!withDeps) selection[name]={include,withDeps}; // store only non-default
-  }
-  const r=await fetch("/api/project/tier2-selection",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({slug:PROJ,selection})}).then(r=>r.json());
-  if(r.error){alert(r.error);return;}
-  const n=Object.keys(selection).length;
-  $("#t2-sel-hint").textContent = n? `Saved — ${n} package(s) customised. Click "Preview downloads" to see the resulting count.` : `Saved — including everything. Click "Preview downloads" to see the count.`;
+$("#files-refresh").onclick=loadFiles;
+
+// tier-2 packages to include
+let PKG_DIRTY=false;
+async function loadPkgs(){
+  const r=await api("/api/project/tier2-items?slug="+encodeURIComponent(PROJ)); const box=$("#pkgs");
+  if(!r.ready){ box.innerHTML='<p style="color:var(--muted);padding:16px">This list fills in once tier 1 has selected its packages.</p>'; $("#pkgs-save").disabled=true; return; }
+  const sel=r.selection||{}; const inc=(n)=>sel[n]?sel[n].include!==false:true, wd=(n)=>sel[n]?sel[n].withDeps!==false:true;
+  box.innerHTML=`<table><thead><tr><th>Package</th><th>Version</th><th>Include it</th><th>Include its dependencies</th></tr></thead><tbody>`+r.items.map(it=>`<tr data-name="${esc(it.name)}"><td>${esc(it.name)}</td><td class="v">${esc(it.version||"")}</td>
+    <td><input type="checkbox" class="p-inc" aria-label="Include ${esc(it.name)}" ${inc(it.name)?"checked":""}/></td>
+    <td><label style="display:flex;gap:6px;align-items:center"><input type="checkbox" class="p-wd" aria-label="Include the dependencies of ${esc(it.name)}" ${wd(it.name)?"checked":""} ${it.depCount?"":"disabled"}/> <span style="color:var(--muted)">${it.depCount}</span></label></td></tr>`).join("")+`</tbody></table>`;
+  const n=Object.keys(sel).length; $("#pkgs-sum").textContent=`${r.items.length} packages from tier 1`+(n?`, ${n} changed from "include everything"`:", all included");
+  PKG_DIRTY=false; $("#pkgs-save").disabled=true;
+  box.onchange=()=>{ PKG_DIRTY=true; $("#pkgs-save").disabled=false; };
+}
+$("#pkgs-all").onclick=()=>{ $$("#pkgs input:not([disabled])").forEach(c=>c.checked=true); PKG_DIRTY=true; $("#pkgs-save").disabled=false; };
+$("#pkgs-save").onclick=async()=>{ const selection={}; for(const tr of $$("#pkgs tbody tr")){ const include=$(".p-inc",tr).checked; const w=$(".p-wd",tr); const withDeps=w.disabled?true:w.checked; if(!include||!withDeps) selection[tr.dataset.name]={include,withDeps}; }
+  const r=await api("/api/project/tier2-selection",{body:{slug:PROJ,selection}}); if(r.error){toast(r.error,true);return;} toast("Selection saved."); loadPkgs(); };
+
+// console
+function runConsole(){ const inp=$("#cmd"); const command=inp.value.trim(); if(!command)return; CON.push("\n$ "+command,"meta"); inp.value="";
+  api("/api/exec",{body:{slug:PROJ,tier:TIER,command}}).then(r=>{ if(r.error){toast(r.error,true);return;} const s=new EventSource("/api/job/stream?job="+r.jobId);
+    s.onmessage=ev=>{ const e=JSON.parse(ev.data); if(e.type==="line"&&e.stream!=="meta") CON.push(e.text, e.stream==="err"?"err":""); else if(e.status) s.close(); }; s.onerror=()=>s.close(); }); }
+$("#cmd-run").onclick=runConsole; $("#cmd").addEventListener("keydown",e=>{if(e.key==="Enter")runConsole();});
+
+// ---------- tiers & menu ----------
+$$(".tier").forEach(b=>b.onclick=()=>{ if(TIER===b.dataset.tier)return; TIER=b.dataset.tier; SEL_STEP=null; VIEWING=null; try{localStorage.setItem("tier",TIER);}catch{} render(); openStream(); if(PANE==="files")loadFiles(); });
+const menu=$("#more-menu"), moreBtn=$("#more-btn");
+moreBtn.onclick=(e)=>{ e.stopPropagation(); menu.hidden=!menu.hidden; moreBtn.setAttribute("aria-expanded",String(!menu.hidden)); };
+document.addEventListener("click",()=>{ menu.hidden=true; moreBtn.setAttribute("aria-expanded","false"); });
+menu.onclick=async(e)=>{ const a=e.target.closest("button")?.dataset.act; if(!a)return;
+  if(a==="rename"){ const n=await ask({title:"Rename project",input:{value:PR.name},yes:"Rename"}); if(n){ await api("/api/project/rename",{body:{slug:PROJ,name:n}}); reload(); } }
+  if(a==="setup") run("setup");
+  if(a==="preview") run("preview");
+  if(a==="delete") deleteProject(PROJ, PR.name, PR);
 };
-$("#stop").onclick=()=>fetch("/api/project/stop",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({slug:PROJ,tier:TIER})});
-$("#rename").onclick=async()=>{const n=prompt("Rename project:",$("#proj-name").textContent);if(n){await fetch("/api/project/rename",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({slug:PROJ,name:n})});renderProject();refreshProjects();}};
-$("#delete").onclick=async()=>{if(!confirm("Delete this project and its output?"))return;const r=await fetch("/api/project?slug="+PROJ,{method:"DELETE"}).then(r=>r.json());if(r.error){alert(r.error);return;}if(es)es.close();PROJ=null;$("#sel").style.display="none";$("#no-sel").style.display="block";refreshProjects();};
-async function viewLog(step){switchPane("logs");const r=await fetch(`/api/project/log?slug=${PROJ}&tier=${TIER}&step=${step}`).then(r=>r.json());$("#live-log").textContent=r.text||`(no log for step ${step} yet)`;}
+async function deleteProject(slug, name, pr){
+  const running=pr&&pr.view&&["tier1","tier2"].some(t=>pr.view[t].steps.some(s=>s.status==="running"));
+  if(running){ toast(`“${name}” is running. Stop it before deleting it.`,true); return; }
+  const imported=pr&&pr.tier1&&pr.tier1.externalOutput;
+  const ok=await ask({title:`Delete “${name}”?`, yes:"Delete project", danger:true,
+    body:`<p>This removes the project and everything in its output folders, including its bundles, functions and logs. It can't be undone.</p>`+
+      (imported?`<p style="color:var(--muted);font-size:13px">The imported tier-1 folder <b>${esc(imported)}</b> is outside the project and is not deleted.</p>`:"")});
+  if(!ok)return;
+  const r=await api("/api/project?slug="+encodeURIComponent(slug),{method:"DELETE"}); if(r.error){toast(r.error,true);return;}
+  if(PROJ===slug){ if(ES)ES.close(); PROJ=null; PR=null; try{localStorage.removeItem("proj");}catch{} $("#sel").hidden=true; $("#no-sel").hidden=false; }
+  refreshProjects(); toast(`Deleted “${name}”.`);
+}
 
-// ---- edit params ----
-$("#edit-params").onclick=async()=>{ const pr=await fetch("/api/project?slug="+PROJ).then(r=>r.json()); const T=CFG.tiers[TIER];
-  $("#pd-title").textContent="Edit "+T.title+" parameters"; buildParamFields($("#pd-params"),T.params,pr[TIER].params); $("#params-dlg").showModal();
+// ---------- settings ----------
+// One component for "Settings" (a tier of the open project) and "New project" (tier 1).
+let SET=null; // { tier, values, saved, group, onSave }
+function modeOf(tier,values){ const mf=CFG.tiers[tier].modeFrom||{param:"MODE",default:"expensive"}; const raw=String(values[mf.param]??""); return (mf.map?mf.map[raw]:raw)||mf.default; }
+function visible(p,tier,values){ if(p.modes&&p.modes.length&&!p.modes.includes(modeOf(tier,values)))return false; if(p.when)for(const[k,v]of Object.entries(p.when))if(String(values[k]??"")!==String(v))return false; return true; }
+function isChanged(p,values){ return String(values[p.key]??"")!==String(p.default??""); }
+
+function openSettings({tier,current,title,extra,onSave,saveLabel}){
+  const params=CFG.tiers[tier].params;
+  const values={}; for(const p of params) values[p.key]= current && p.key in current ? String(current[p.key]) : String(p.default??"");
+  if(current && !("STREAM" in current)) values.STREAM="0"; // a project older than streamed mode is in batch mode (both tiers)
+  SET={tier,values,saved:{...values},group:CFG.tiers[tier].groups[0].id,onSave};
+  $("#set-title").textContent=title; $("#set-save").textContent=saveLabel||"Save changes"; $("#set-search").value="";
+  const ex=$("#set-extra"); ex.innerHTML=""; ex.hidden=!extra; if(extra) ex.appendChild(extra);
+  drawSettings(); $("#set-dlg").showModal();
+}
+function drawSettings(){
+  const {tier,values}=SET; const T=CFG.tiers[tier]; const q=$("#set-search").value.trim().toLowerCase();
+  const params=T.params.filter(p=>p.key!=="INPUT_DIR");
+  // nav
+  const nav=$("#set-nav"); nav.innerHTML="";
+  for(const g of T.groups){ const ps=params.filter(p=>p.group===g.id&&visible(p,tier,values)); if(!ps.length)continue; const nch=ps.filter(p=>isChanged(p,values)).length;
+    const b=document.createElement("button"); b.setAttribute("aria-current",String(!q&&SET.group===g.id));
+    b.innerHTML=`<div class="g"><span>${esc(g.title)}</span>${nch?`<span class="changed-n" title="${nch} changed from default">${nch}</span>`:""}</div><div class="gh">${esc(g.help)}</div>`;
+    b.onclick=()=>{ SET.group=g.id; $("#set-search").value=""; drawSettings(); }; nav.appendChild(b); }
+  // pane
+  const pane=$("#set-pane"); pane.innerHTML="";
+  let list;
+  if(q){ list=params.filter(p=>visible(p,tier,values)&&(p.label+" "+(p.help||"")+" "+p.key).toLowerCase().includes(q));
+    pane.innerHTML=`<h4>Matching settings</h4>`; if(!list.length) pane.innerHTML+=`<p class="no-hits">No setting matches “${esc(q)}”.</p>`; }
+  else { const g=T.groups.find(x=>x.id===SET.group)||T.groups[0]; list=params.filter(p=>p.group===g.id&&visible(p,tier,values)); pane.innerHTML=`<h4>${esc(g.title)}</h4><p class="gdesc">${esc(g.help)}</p>`; }
+  for(const p of list) pane.appendChild(fieldFor(p,!!q));
+  const n=params.filter(p=>String(values[p.key])!==String(SET.saved[p.key])).length;
+  $("#set-status").textContent = n ? `${n} unsaved change${n>1?"s":""}` : "";
+}
+function fieldFor(p,showGroup){
+  const {tier,values}=SET; const v=values[p.key]; const d=document.createElement("div"); d.className="set";
+  const grp=showGroup?` <span class="ingroup">in ${esc((CFG.tiers[tier].groups.find(g=>g.id===p.group)||{}).title||"")}</span>`:"";
+  d.innerHTML=`<div class="name">${esc(p.label)}${isChanged(p,values)?'<span class="changed" title="changed from default"></span>':""}${grp}</div><div class="help">${esc(p.help||"")}</div>`;
+  const ctl=document.createElement("div"); ctl.className="ctl";
+  const set=(val)=>{ values[p.key]=String(val); drawSettings(); };
+  if(p.type==="bool"){ const s=document.createElement("button"); s.className="switch"; s.setAttribute("role","switch"); s.setAttribute("aria-checked",String(v==="1")); s.setAttribute("aria-label",p.label); s.onclick=()=>set(v==="1"?"0":"1"); ctl.appendChild(s); }
+  else if(p.type==="select" && p.options.length<=4 && p.options.join("").length<=34){ const g=document.createElement("div"); g.className="seg"; g.setAttribute("role","group"); g.setAttribute("aria-label",p.label);
+    for(const o of p.options){ const b=document.createElement("button"); b.textContent=o; b.setAttribute("aria-pressed",String(o===v)); b.onclick=()=>set(o); g.appendChild(b); } ctl.appendChild(g); }
+  else if(p.type==="select"){ const s=document.createElement("select"); s.setAttribute("aria-label",p.label); s.innerHTML=p.options.map(o=>`<option ${o===v?"selected":""}>${esc(o)}</option>`).join(""); s.onchange=()=>set(s.value); ctl.appendChild(s); }
+  else if(p.type==="multi"){ ctl.classList.add("wide"); const chosen=new Set(String(v||"").split(",").map(s=>s.trim()).filter(Boolean)); const all=chosen.has("all");
+    const w=document.createElement("div"); w.className="checks";
+    for(const o of p.options){ const l=document.createElement("label"); l.className="check"; l.innerHTML=`<input type="checkbox" ${all||chosen.has(o.value)?"checked":""}/><span><span class="cl">${esc(o.label)}</span><br><span class="ch">${esc(o.help||"")}</span></span>`;
+      l.querySelector("input").onchange=(e)=>{ if(all){ chosen.delete("all"); for(const x of p.options) chosen.add(x.value); } e.target.checked?chosen.add(o.value):chosen.delete(o.value); set(p.options.map(x=>x.value).filter(x=>chosen.has(x)).join(",")); }; w.appendChild(l); }
+    for(const f of p.fixed||[]){ const l=document.createElement("label"); l.className="check fixed"; l.innerHTML=`<input type="checkbox" checked disabled/><span><span class="cl">${esc(f.label)}</span><br><span class="ch">${esc(f.help||"")}</span></span>`; w.appendChild(l); }
+    ctl.appendChild(w); }
+  else { const i=document.createElement("input"); i.type=p.type==="number"?"number":"text"; i.value=v; i.setAttribute("aria-label",p.label); i.onchange=()=>set(i.value); i.oninput=()=>{ values[p.key]=i.value; }; ctl.appendChild(i); }
+  if(isChanged(p,values)){ const r=document.createElement("button"); r.className="reset"; r.textContent=`Reset to ${p.type==="bool"?(p.default==="1"?"on":"off"):(p.default===""?"empty":p.default)}`; r.onclick=()=>set(p.default??""); ctl.appendChild(r); }
+  d.appendChild(ctl); return d;
+}
+$("#set-search").oninput=drawSettings;
+$("#set-cancel").onclick=()=>$("#set-dlg").close();
+$("#set-save").onclick=async()=>{ const ok=await SET.onSave(SET.values); if(ok!==false) $("#set-dlg").close(); };
+
+$("#settings-btn").onclick=()=>{ if(busy()){ toast("Settings can be changed once this tier stops running.",true); return; }
+  openSettings({tier:TIER,current:PR[TIER].params,title:`${TIER==="tier1"?"Tier 1":"Tier 2"} settings — ${PR.name}`,
+    onSave:async(values)=>{ const r=await api("/api/project/params",{body:{slug:PROJ,tier:TIER,params:values}}); if(r.error){toast(r.error,true);return false;} toast("Settings saved."); reload(); }}); };
+
+// new project: name + tier-1 settings in the same panel
+function newProject(){
+  const extra=document.createElement("div"); extra.innerHTML=`<div class="field-line"><label for="np-name">Project name</label><input type="text" id="np-name" placeholder="e.g. top 1500, 40 packages"/><p>Tier 2's settings can be set later; it reads tier 1's output on its own.</p></div>`;
+  openSettings({tier:"tier1",current:null,title:"New project",extra,saveLabel:"Create project",
+    onSave:async(values)=>{ const name=$("#np-name").value.trim(); if(!name){ toast("Give the project a name.",true); $("#np-name").focus(); return false; }
+      const proj=await api("/api/projects",{body:{name,tier1Params:values}}); if(proj.error){toast(proj.error,true);return false;} await refreshProjects(); selectProject(proj.slug,"tier1"); }});
+  setTimeout(()=>$("#np-name").focus(),30);
+}
+$("#new-btn").onclick=newProject; $("#new-btn-2").onclick=newProject;
+$("#import-btn").onclick=async()=>{
+  const d=$("#ask-dlg");
+  const ok=await ask({title:"Import a tier-1 output folder",yes:"Import",body:`<p style="color:var(--muted);font-size:13.5px">Use a tier-1 run made elsewhere and run only tier 2 on it. The folder should contain <b>05_selected_bundles/selected_dependencies.csv</b>.</p>
+    <div class="field-line"><label for="im-name">Project name</label><input type="text" id="im-name"/></div><div class="field-line"><label for="im-path">Folder (full path)</label><input type="text" id="im-path" placeholder="/path/to/tier1/output"/></div>`});
+  if(!ok)return; const name=d.querySelector("#im-name").value.trim(), path=d.querySelector("#im-path").value.trim(); if(!path){toast("Give the folder's full path.",true);return;}
+  const proj=await api("/api/projects/import",{body:{name:name||"imported",externalOutput:path}}); if(proj.error){toast(proj.error,true);return;} if(proj.warning) toast(proj.warning,true);
+  await refreshProjects(); selectProject(proj.slug,"tier2");
 };
-$("#pd-cancel").onclick=()=>$("#params-dlg").close();
-$("#pd-save").onclick=async()=>{ const T=CFG.tiers[TIER]; const params=readParamFields("pd-params",T.params);
-  const r=await fetch("/api/project/params",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({slug:PROJ,tier:TIER,params})}).then(r=>r.json());
-  if(r.error){alert(r.error);return;} $("#params-dlg").close(); renderProject();
-};
-
-// ---- console ----
-function runConsole(){const inp=$("#cmd");const command=inp.value.trim();if(!command)return;const con=$("#con");const h=document.createElement("span");h.className="meta";h.textContent="\n$ "+command+"\n";con.appendChild(h);con.scrollTop=con.scrollHeight;inp.value="";
-  fetch("/api/exec",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({slug:PROJ,tier:TIER,command})}).then(r=>r.json()).then(r=>{if(r.error){con.innerHTML+=`<span class="err">${r.error}\n</span>`;return;}const s=new EventSource("/api/job/stream?job="+r.jobId);s.onmessage=ev=>{const e=JSON.parse(ev.data);if(e.type==="line"){const sp=document.createElement("span");sp.className=e.stream==="err"?"err":e.stream==="meta"?"meta":"";sp.textContent=e.text+"\n";con.appendChild(sp);con.scrollTop=con.scrollHeight;}else if(e.status)s.close();};s.onerror=()=>s.close();});}
-$("#cmd-run").onclick=runConsole;$("#cmd").addEventListener("keydown",e=>{if(e.key==="Enter")runConsole();});
-
-// ---- outputs ----
-async function refreshOutputs(){const rows=await fetch(`/api/project/outputs?slug=${PROJ}&tier=${TIER}`).then(r=>r.json());const box=$("#outs");box.innerHTML=rows.length?rows.map(r=>`<div><span>${r.path}</span><span>${fmtBytes(r.bytes)}</span></div>`).join(""):'<div><span>No output yet.</span></div>';}
-$("#refresh-out").onclick=refreshOutputs;
-
-// ---- subtabs ----
-function switchPane(name){document.querySelectorAll(".subtab").forEach(t=>t.classList.toggle("active",t.dataset.pane===name));document.querySelectorAll(".pane").forEach(x=>x.classList.remove("active"));$("#pane-"+name).classList.add("active");if(name==="outputs")refreshOutputs();}
-document.querySelectorAll(".subtab").forEach(t=>t.onclick=()=>switchPane(t.dataset.pane));
-
-// ---- draggable splitter: resize the state table / log split ----
-(function(){
-  const split=$("#split"), sw=document.querySelector(".statewrap");
-  try{ const saved=localStorage.getItem("stateH"); if(saved) sw.style.height=saved; }catch{}
-  let dragging=false;
-  const onMove=(e)=>{ if(!dragging)return; const y=e.touches?e.touches[0].clientY:e.clientY; const top=sw.getBoundingClientRect().top; let h=y-top; h=Math.max(70,Math.min(h,window.innerHeight-200)); sw.style.height=h+"px"; };
-  const stop=()=>{ if(!dragging)return; dragging=false; document.body.style.userSelect=""; try{localStorage.setItem("stateH",sw.style.height);}catch{} };
-  const start=(e)=>{ dragging=true; document.body.style.userSelect="none"; e.preventDefault(); };
-  split.addEventListener("mousedown",start); split.addEventListener("touchstart",start,{passive:false});
-  window.addEventListener("mousemove",onMove); window.addEventListener("touchmove",onMove,{passive:false});
-  window.addEventListener("mouseup",stop); window.addEventListener("touchend",stop);
-})();
 </script>
 </body>
 </html>
