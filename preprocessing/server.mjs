@@ -13,29 +13,65 @@
 
 import http from "node:http";
 import { spawn } from "node:child_process";
-import { join, resolve, relative } from "node:path";
-import { readFileSync, writeFileSync, renameSync, existsSync, readdirSync, statSync, mkdirSync, rmSync, createWriteStream, openSync, readSync, closeSync } from "node:fs";
+import { join, resolve, relative, dirname } from "node:path";
+import { readFileSync, writeFileSync, renameSync, existsSync, readdirSync, statSync, mkdirSync, rmSync, createWriteStream, openSync, readSync, closeSync, copyFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { HERE, PROJECTS_DIR, TIERS, projectDir, projectFile, tierOutput, tierLogs, buildTierCommand, cleanStepOutputs, activeStepIds, allStepIds, tierView } from "./lib-project.mjs";
+import { packOutputs, unpackOutputs } from "./lib-pack.mjs";
+import { HERE, PROJECTS_DIR, OPENED_FILE, openedProjects, saveOpenedProjects, TIERS, TIER_KEYS, TIER3_INPUT_ARCHIVES, projectDir, projectFile, tierOutput, tierLogs, buildTierCommand, cleanStepOutputs, activeStepIds, allStepIds, tierView } from "./lib-project.mjs";
 
 const PORT = Number(process.argv[2] ?? process.env.PORT ?? 5273);
 mkdirSync(PROJECTS_DIR, { recursive: true });
-const TIER_KEYS = ["tier1", "tier2"];
 
 // ---------------- project store (atomic, file-backed) ----------------
-function loadProject(slug) { try { return JSON.parse(readFileSync(projectFile(slug), "utf8")); } catch { return null; } }
+// project.json, or its backup (project.json.bak, the last good version) if it cannot be read
+function readProjectFile(file) {
+  let why = null;
+  for (const f of [file, file + ".bak"]) {
+    try { const p = JSON.parse(readFileSync(f, "utf8")); if (p && p.tier1 && p.tier2) return { proj: p, fromBackup: f !== file }; why = why ?? `${f.endsWith(".bak") ? "backup" : "project.json"} is not a project`; }
+    catch (e) { why = why ?? (existsSync(f) ? `project.json cannot be read (${e.code || e.name}: ${String(e.message).slice(0, 100)})` : "no project.json"); }
+  }
+  return { proj: null, problem: why };
+}
+function loadProject(slug) {
+  const r = readProjectFile(projectFile(slug));
+  if (r.proj) { r.proj.slug = slug; fillSteps(r.proj); } // the folder's name (or its entry in opened-projects.json) is the slug
+  return r.proj;
+}
 function saveProject(proj) {
   proj.updatedAt = new Date().toISOString();
-  const tmp = projectFile(proj.slug) + ".tmp";
+  const file = projectFile(proj.slug), tmp = file + ".tmp";
+  // keep the last good version as project.json.bak, in case the disk damages project.json
+  try { JSON.parse(readFileSync(file, "utf8")); copyFileSync(file, file + ".bak"); } catch {}
   writeFileSync(tmp, JSON.stringify(proj, null, 2));
-  renameSync(tmp, projectFile(proj.slug)); // atomic replace
+  renameSync(tmp, file); // atomic replace
 }
-function listProjects() {
-  const out = [];
-  for (const slug of readdirSync(PROJECTS_DIR)) { const p = loadProject(slug); if (p) out.push(p); }
+// a project saved by an older version may lack steps added since: add them as "not run"
+// (and a tier added since — tier 3 — with its default settings)
+function fillSteps(proj) {
+  for (const t of TIER_KEYS) {
+    if (!proj[t]) proj[t] = { params: { ...TIERS[t].defaults }, steps: {} };
+    proj[t].steps = { ...freshSteps(t), ...(proj[t].steps ?? {}) };
+  }
+  return proj;
+}
+const isDir = (p) => { try { return statSync(p).isDirectory(); } catch { return false; } };
+// Every project: the folders in PROJECTS_DIR plus the ones opened from elsewhere. A project
+// that cannot be read is still listed, with the reason, so it can be fixed or removed.
+function listAll() {
+  const out = [], opened = openedProjects();
+  let names = []; try { names = readdirSync(PROJECTS_DIR).filter((n) => isDir(join(PROJECTS_DIR, n))); } catch {}
+  for (const slug of [...names.filter((n) => !opened[n]), ...Object.keys(opened)]) {
+    const dir = projectDir(slug), where = opened[slug] ? "opened" : "local";
+    if (!isDir(dir)) { out.push({ slug, name: slug, damaged: `folder not found: ${dir} (drive not mounted?)`, where, dir }); continue; }
+    const r = readProjectFile(join(dir, "project.json"));
+    if (!r.proj) { if (where === "opened" || existsSync(join(dir, "tier1")) || existsSync(join(dir, "project.json.bak")) || existsSync(join(dir, "project.json"))) out.push({ slug, name: slug, damaged: r.problem, where, dir }); continue; }
+    r.proj.slug = slug; fillSteps(r.proj);
+    out.push(Object.assign(r.proj, { where, dir, ...(r.fromBackup ? { note: "project.json could not be read; loaded from its backup" } : {}) }));
+  }
   out.sort((a, b) => (b.createdAt ?? "").localeCompare(a.createdAt ?? ""));
   return out;
 }
+const listProjects = () => listAll().filter((p) => !p.damaged);
 const slugify = (name) => (String(name || "project").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 32) || "project") + "-" + randomUUID().slice(0, 4);
 // state for every step id the tier can have in ANY mode, so switching mode never loses a row
 const freshSteps = (tier) => Object.fromEntries(allStepIds(tier).map((s) => [s, { status: "pending", startedAt: null, finishedAt: null, exitCode: null, durationMs: null }]));
@@ -50,9 +86,46 @@ function makeProject(name, tier1Params, tier2Params, externalOutput) {
     createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
     tier1: { params: { ...TIERS.tier1.defaults, ...tier1Params }, steps: tier1Steps, ...(externalOutput ? { externalOutput: resolve(externalOutput) } : {}) },
     tier2: { params: { ...TIERS.tier2.defaults, ...tier2Params }, steps: freshSteps("tier2") },
+    tier3: { params: { ...TIERS.tier3.defaults }, steps: freshSteps("tier3") },
   };
   saveProject(proj);
   return proj;
+}
+
+// Open existing project(s) where they are: `path` is a project folder (with project.json), any
+// folder inside one (e.g. its tier1/output), or a projects folder holding several projects.
+function openProjects(path) {
+  const start = resolve(path.trim().replace(/^["']|["']$/g, "").replace(/^~(?=\/|$)/, process.env.HOME ?? "~"));
+  if (!path.trim()) return { error: "give the folder's full path" };
+  if (!isDir(start)) return { error: `folder not found: ${start}` };
+  const isProject = (d) => existsSync(join(d, "project.json")) || existsSync(join(d, "project.json.bak"));
+  let found = [];
+  if (isProject(start)) found = [start];
+  else {
+    // a folder inside a project?
+    for (let d = dirname(start), i = 0; i < 4 && d !== dirname(d); d = dirname(d), i++) if (isProject(d)) { found = [d]; break; }
+    // or a projects folder
+    if (!found.length) try { found = readdirSync(start).map((n) => join(start, n)).filter((d) => isDir(d) && isProject(d)); } catch {}
+  }
+  if (!found.length) return { error: `no project found in ${start} — choose the project's folder (the one that holds project.json, tier1/ and tier2/), or a folder of projects` };
+  const opened = openedProjects(), result = { opened: [], already: [], failed: [] };
+  const known = () => new Set([...readdirSync(PROJECTS_DIR).filter((n) => isDir(join(PROJECTS_DIR, n))), ...Object.keys(opened)]);
+  for (const dir of found) {
+    const r = readProjectFile(join(dir, "project.json"));
+    if (!r.proj) { result.failed.push({ dir, problem: r.problem }); continue; }
+    const same = [...known()].find((s) => resolve(projectDir(s)) === resolve(dir) || (opened[s] && resolve(opened[s]) === resolve(dir)));
+    if (same) { result.already.push({ slug: same, name: r.proj.name, dir }); continue; }
+    let slug = dirname(dir) === PROJECTS_DIR ? dir.split(/[\\/]/).pop() : (r.proj.slug || slugify(r.proj.name));
+    if (known().has(slug)) slug = slugify(r.proj.name || slug);
+    opened[slug] = dir; saveOpenedProjects(opened);
+    const proj = r.proj; proj.slug = slug;
+    fillSteps(proj);
+    // a step that was running when the project was last used is not running now
+    for (const t of TIER_KEYS) for (const s of Object.keys(proj[t].steps ?? {})) if (proj[t].steps[s]?.status === "running") { proj[t].steps[s].status = "error"; proj[t].steps[s].note = "interrupted"; }
+    saveProject(proj);
+    result.opened.push({ slug, name: proj.name, dir, ...(r.fromBackup ? { note: "loaded from project.json.bak" } : {}) });
+  }
+  return result;
 }
 
 // boot: any step left "running" is dead -> error
@@ -162,8 +235,27 @@ async function runSequence(proj, tier, steps) {
   const r = rt(proj.slug, tier);
   if (r.busy) return;
   r.busy = true; emit(proj.slug, tier, { type: "run", status: "running", steps });
+  const out = tierOutput(proj, tier), say = (text) => emit(proj.slug, tier, { type: "line", stream: "meta", text });
+  // steps always work on plain files: unpack what the last run packed
+  try { unpackOutputs(tier, out, say); } catch (e) { say(`unpacking failed: ${e.message}`); }
+  // tier 3 reads tier 1's and tier 2's packed outputs: unpack the archives it needs, and pack
+  // them again afterwards
+  const borrowed = {};
+  if (tier === "tier3") for (const [t, only] of Object.entries(TIER3_INPUT_ARCHIVES)) {
+    try { const tout = tierOutput(proj, t); borrowed[t] = unpackOutputs(t, tout, (x) => say(`${t}: ${x}`), only).map((a) => relative(tout, a)); } catch (e) { say(`${t}: unpacking failed: ${e.message}`); }
+  }
   let ok = true;
   for (const step of steps) { const code = await runStep(proj, tier, step); if (code !== 0) { ok = false; break; } }
+  // then pack each step's per-package files into .tgz (logs and small files stay as they are)
+  const fresh = loadProject(proj.slug) || proj;
+  if (String(fresh[tier].params?.PACK_OUTPUTS ?? "1") === "1") {
+    say("packing outputs into .tgz …");
+    try { const n = packOutputs(tier, out, say).length; say(n ? `packed ${n} archive(s)` : "nothing to pack"); } catch (e) { say(`packing failed: ${e.message}`); }
+  }
+  for (const [t, only] of Object.entries(borrowed)) {
+    if (!only.length || String(fresh[t]?.params?.PACK_OUTPUTS ?? "1") !== "1") continue;
+    try { packOutputs(t, tierOutput(proj, t), (x) => say(`${t}: ${x}`), only); } catch (e) { say(`${t}: packing failed: ${e.message}`); }
+  }
   r.busy = false; emit(proj.slug, tier, { type: "run", status: ok ? "done" : "error" });
 }
 const firstUnfinished = (proj, tier) => activeStepIds(proj, tier).find((s) => !["done", "imported"].includes(proj[tier].steps[s]?.status)) ?? null;
@@ -200,7 +292,8 @@ const server = http.createServer(async (req, res) => {
   }
 
   // projects
-  if (p === "/api/projects" && req.method === "GET") return json(res, 200, listProjects().map(withView));
+  if (p === "/api/projects" && req.method === "GET") return json(res, 200, listAll().map((x) => (x.damaged ? x : withView(x))));
+  if (p === "/api/projects/open" && req.method === "POST") { const b = await readBody(req); return json(res, 200, openProjects(String(b.path ?? ""))); }
   if (p === "/api/projects" && req.method === "POST") { const b = await readBody(req); return json(res, 200, makeProject(b.name, b.tier1Params ?? {}, b.tier2Params ?? {})); }
   if (p === "/api/projects/import" && req.method === "POST") {
     const b = await readBody(req);
@@ -211,9 +304,16 @@ const server = http.createServer(async (req, res) => {
     return json(res, 200, { ...proj, warning: hasCsv ? undefined : "no selected_dependencies.csv found under that path — tier 2 step 01 may fail" });
   }
   if (p === "/api/project" && req.method === "GET") { const proj = loadProject(q.get("slug")); return proj ? json(res, 200, withView(proj)) : json(res, 404, { error: "no such project" }); }
-  if (p === "/api/project" && req.method === "DELETE") { const slug = q.get("slug"); if (TIER_KEYS.some((t) => rt(slug, t).busy)) return json(res, 409, { error: "project is running" }); try { rmSync(projectDir(slug), { recursive: true, force: true }); return json(res, 200, { ok: true }); } catch (e) { return json(res, 500, { error: String(e.message) }); } }
+  if (p === "/api/project" && req.method === "DELETE") {
+    const slug = q.get("slug"); if (TIER_KEYS.some((t) => rt(slug, t).busy)) return json(res, 409, { error: "project is running" });
+    const opened = openedProjects();
+    // a project opened from another folder is only removed from the list; its files stay
+    if (opened[slug] && q.get("files") !== "1") { delete opened[slug]; saveOpenedProjects(opened); return json(res, 200, { ok: true, removedFromList: true }); }
+    try { rmSync(projectDir(slug), { recursive: true, force: true }); if (opened[slug]) { delete opened[slug]; saveOpenedProjects(opened); } return json(res, 200, { ok: true }); }
+    catch (e) { return json(res, 500, { error: String(e.message) }); }
+  }
   if (p === "/api/project/rename" && req.method === "POST") { const b = await readBody(req); const proj = loadProject(b.slug); if (!proj) return json(res, 404, { error: "no such project" }); proj.name = String(b.name || proj.name); saveProject(proj); return json(res, 200, proj); }
-  if (p === "/api/project/params" && req.method === "POST") { const b = await readBody(req); const proj = loadProject(b.slug); if (!proj) return json(res, 404, { error: "no such project" }); if (rt(proj.slug, b.tier).busy) return json(res, 409, { error: "tier is running" }); proj[b.tier].params = { ...proj[b.tier].params, ...(b.params ?? {}) }; saveProject(proj); return json(res, 200, proj); }
+  if (p === "/api/project/params" && req.method === "POST") { const b = await readBody(req); const proj = loadProject(b.slug); if (!proj) return json(res, 404, { error: "no such project" }); if (!TIER_KEYS.includes(b.tier)) return json(res, 400, { error: "bad tier" }); if (rt(proj.slug, b.tier).busy) return json(res, 409, { error: "tier is running" }); proj[b.tier].params = { ...proj[b.tier].params, ...(b.params ?? {}) }; saveProject(proj); return json(res, 200, proj); }
 
   // tier-2 inclusion selection: list survived items (+ current selection), and save it
   if (p === "/api/project/tier2-items" && req.method === "GET") {
@@ -233,6 +333,9 @@ const server = http.createServer(async (req, res) => {
     if (!proj) return json(res, 404, { error: "no such project" });
     if (!TIER_KEYS.includes(tier)) return json(res, 400, { error: "bad tier" });
     if (rt(proj.slug, tier).busy) return json(res, 409, { error: "already running" });
+    // tier 3 reads (and unpacks) tier 1's and tier 2's files: never at the same time as them
+    const clash = tier === "tier3" ? ["tier1", "tier2"].find((t) => rt(proj.slug, t).busy) : rt(proj.slug, "tier3").busy ? "tier3" : null;
+    if (clash) return json(res, 409, { error: `${TIERS[clash].title.split(" · ")[0]} is running; wait until it finishes` });
     if (tier === "tier2") writeTier2Selection(proj); // sync inclusion selection before running
     let steps;
     if (b.step === "all") steps = [...activeStepIds(proj, tier)];
@@ -272,6 +375,13 @@ const server = http.createServer(async (req, res) => {
   if (p === "/api/project/stream") { const slug = q.get("slug"), tier = q.get("tier"); if (!existsSync(projectFile(slug))) { res.writeHead(404); return res.end(); } const r = rt(slug, tier); res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" }); for (const e of r.buffer) writeSse(res, e); r.listeners.add(res); req.on("close", () => r.listeners.delete(res)); return; }
   if (p === "/api/project/stop" && req.method === "POST") { const b = await readBody(req); const r = rt(b.slug, b.tier); if (r?.proc) { r.proc.kill("SIGTERM"); return json(res, 200, { ok: true }); } return json(res, 404, { error: "nothing running" }); }
   if (p === "/api/project/log") { const f = join(tierLogs(q.get("slug"), q.get("tier")), `${q.get("step")}.log`); return json(res, 200, readLogTail(f)); }
+  if (p === "/api/project/report") {
+    // tier 3's readable report (step 03)
+    const proj = loadProject(q.get("slug")); if (!proj) return json(res, 404, { error: "no such project" });
+    const f = join(tierOutput(proj, "tier3"), "03_report", "report.md");
+    if (!existsSync(f)) return json(res, 200, { text: "" });
+    return json(res, 200, { text: readFileSync(f, "utf8"), path: relative(projectDir(proj.slug), f), mtime: statSync(f).mtime.toISOString() });
+  }
   if (p === "/api/project/outputs") { const proj = loadProject(q.get("slug")); if (!proj) return json(res, 404, { error: "no such project" }); return json(res, 200, listOutputs(tierOutput(proj, q.get("tier")))); }
 
   // console (runs in the tier's output folder)

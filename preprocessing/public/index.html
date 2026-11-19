@@ -89,6 +89,9 @@ input[type=number]{max-width:160px}
 .proj:hover{background:var(--hover)}
 .proj[aria-current="true"]{background:var(--surface);border-color:var(--line)}
 .proj .nm{font-weight:600;font-size:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.proj .where{font-size:12px;color:var(--muted);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.proj.damaged{cursor:default}
+.proj.damaged .why{font-size:12.5px;color:var(--err);margin-top:4px;line-height:1.35;overflow-wrap:anywhere}
 .mini{display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;margin-top:6px;font-size:12px;color:var(--muted)}
 .minibar{display:flex;gap:2px;height:6px}
 .minibar i{flex:1;border-radius:2px;background:var(--line)}
@@ -170,6 +173,13 @@ input[type=number]{max-width:160px}
 .files .row{display:flex;justify-content:space-between;gap:16px;padding:3px 2px 3px 18px;font:12.5px var(--mono);color:var(--muted)}
 .files .row span:first-child{color:var(--ink);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .pkgs{flex:1;overflow:auto}
+.report{flex:1;overflow:auto;padding:8px 18px 18px;font-size:14px;line-height:1.5}
+.report h1{font-size:19px;margin:10px 0 6px}.report h2{font-size:16px;margin:18px 0 6px}
+.report p,.report li{max-width:80ch}
+.report table{border-collapse:collapse;font-size:13px;margin:6px 0 10px}
+.report th{text-align:left;font-weight:600;color:var(--muted);padding:5px 8px;border-bottom:1px solid var(--line)}
+.report td{padding:4px 8px;border-bottom:1px solid var(--line);font-variant-numeric:tabular-nums}
+.report .empty{color:var(--muted)}
 .pkgs table{width:100%;border-collapse:collapse;font-size:14px}
 .pkgs th{position:sticky;top:0;background:var(--surface);text-align:left;font-weight:600;color:var(--muted);font-size:13px;padding:8px 14px;border-bottom:1px solid var(--line)}
 .pkgs td{padding:6px 14px;border-bottom:1px solid var(--line)}
@@ -243,6 +253,7 @@ dialog::backdrop{background:rgba(15,20,27,.45)}
     <div class="brand"><h1>Thesis pipeline</h1></div>
     <div class="rail-actions">
       <button class="btn primary" id="new-btn">New project</button>
+      <button class="btn quiet" id="open-btn">Open an existing project</button>
       <button class="btn quiet" id="import-btn">Import a tier-1 output folder</button>
     </div>
     <div class="projects">
@@ -274,7 +285,7 @@ dialog::backdrop{background:rgba(15,20,27,.45)}
           <button class="btn quiet" id="more-btn" aria-haspopup="true" aria-expanded="false" title="More actions">More</button>
           <div class="menu-list" id="more-menu" hidden role="menu">
             <button role="menuitem" data-act="rename">Rename project</button>
-            <button role="menuitem" data-act="setup">Install the tier's dependencies</button>
+            <button role="menuitem" data-act="setup">Install the pipeline's tools (exact versions)</button>
             <button role="menuitem" data-act="preview" data-tier2>Count the downloads (no download)</button>
             <hr/>
             <button role="menuitem" data-act="delete" class="danger">Delete project…</button>
@@ -285,6 +296,7 @@ dialog::backdrop{background:rgba(15,20,27,.45)}
       <div class="tiers" role="tablist" aria-label="Tier">
         <button class="tier" role="tab" data-tier="tier1" id="tt-tier1"></button>
         <button class="tier" role="tab" data-tier="tier2" id="tt-tier2"></button>
+        <button class="tier" role="tab" data-tier="tier3" id="tt-tier3"></button>
       </div>
       <div class="note" id="tier-note"></div>
 
@@ -302,6 +314,7 @@ dialog::backdrop{background:rgba(15,20,27,.45)}
             <button class="tab" role="tab" data-pane="log" aria-selected="true">Log</button>
             <button class="tab" role="tab" data-pane="files" aria-selected="false">Files</button>
             <button class="tab" role="tab" data-pane="pkgs" aria-selected="false" id="pkgs-tab">Packages</button>
+            <button class="tab" role="tab" data-pane="report" aria-selected="false" id="report-tab">Report</button>
             <button class="tab" role="tab" data-pane="console" aria-selected="false">Console</button>
           </div>
 
@@ -320,6 +333,10 @@ dialog::backdrop{background:rgba(15,20,27,.45)}
               <button class="btn" id="pkgs-save" disabled>Save selection</button>
             </div>
             <div class="pkgs" id="pkgs"></div>
+          </div>
+          <div class="pane" id="pane-report" hidden>
+            <div class="pane-bar"><span id="report-sum">Step 03's report.md</span><span class="grow"></span><button class="btn quiet" id="report-refresh">Refresh</button></div>
+            <div class="report" id="report"></div>
           </div>
           <div class="pane" id="pane-console" hidden>
             <div class="pane-bar">Runs a shell command in this tier's output folder.</div>
@@ -400,13 +417,22 @@ async function refreshProjects(){
   if(!Array.isArray(list)||!list.length){ box.innerHTML='<p style="color:var(--muted);font-size:13px;margin:0 8px">No projects yet.</p>'; return list; }
   box.innerHTML="";
   for(const pr of list){
+    if(pr.damaged){
+      // listed so it is not silently lost: say why it cannot be opened, offer to remove it
+      const item=document.createElement("div"); item.className="proj-item";
+      const b=document.createElement("div"); b.className="proj damaged";
+      b.innerHTML=`<div class="nm">${esc(pr.name)}</div><div class="why">Can't be opened: ${esc(pr.damaged)}</div><div class="where">${esc(pr.dir)}</div>`;
+      const del=document.createElement("button"); del.className="proj-del"; del.textContent=pr.where==="opened"?"Remove":"Delete"; del.setAttribute("aria-label",`${del.textContent} project ${pr.name}`);
+      del.onclick=(e)=>{ e.stopPropagation(); deleteProject(pr.slug, pr.name, pr); };
+      item.append(b, del); box.appendChild(item); continue;
+    }
     const b=document.createElement("button"); b.className="proj"; b.setAttribute("aria-current",String(PROJ===pr.slug));
-    b.innerHTML=`<div class="nm">${esc(pr.name)}</div>`+["tier1","tier2"].map(t=>{ const st=pr.view[t].steps; const n=st.filter(s=>DONE(s.status)).length;
-      return `<div class="mini"><span>${t==="tier1"?"T1":"T2"}</span><span class="minibar" aria-hidden="true">${st.map(s=>`<i class="${s.status||"pending"}"></i>`).join("")}</span><span>${n}/${st.length}</span></div>`; }).join("");
-    b.setAttribute("aria-label",`${pr.name}: tier 1 ${pr.view.tier1.steps.filter(s=>DONE(s.status)).length} of ${pr.view.tier1.steps.length} steps done, tier 2 ${pr.view.tier2.steps.filter(s=>DONE(s.status)).length} of ${pr.view.tier2.steps.length}`);
+    b.innerHTML=`<div class="nm">${esc(pr.name)}</div>`+(pr.where==="opened"?`<div class="where" title="${esc(pr.dir)}">${esc(pr.dir)}</div>`:"")+CFG.tierKeys.filter(t=>pr.view[t]).map(t=>{ const st=pr.view[t].steps; const n=st.filter(s=>DONE(s.status)).length;
+      return `<div class="mini"><span>T${t.slice(-1)}</span><span class="minibar" aria-hidden="true">${st.map(s=>`<i class="${s.status||"pending"}"></i>`).join("")}</span><span>${n}/${st.length}</span></div>`; }).join("");
+    b.setAttribute("aria-label",`${pr.name}: `+CFG.tierKeys.filter(t=>pr.view[t]).map(t=>`tier ${t.slice(-1)} ${pr.view[t].steps.filter(s=>DONE(s.status)).length} of ${pr.view[t].steps.length} steps done`).join(", "));
     b.onclick=()=>selectProject(pr.slug, TIER);
     const item=document.createElement("div"); item.className="proj-item"+(PROJ===pr.slug?" open":"");
-    const del=document.createElement("button"); del.className="proj-del"; del.textContent="Delete"; del.setAttribute("aria-label",`Delete project ${pr.name}`);
+    const del=document.createElement("button"); del.className="proj-del"; del.textContent=pr.where==="opened"?"Remove":"Delete"; del.setAttribute("aria-label",`${del.textContent} project ${pr.name}`);
     del.onclick=(e)=>{ e.stopPropagation(); deleteProject(pr.slug, pr.name, pr); };
     item.append(b, del); box.appendChild(item);
   }
@@ -415,7 +441,7 @@ async function refreshProjects(){
 
 async function selectProject(slug,tier,quiet){
   const pr=await api("/api/project?slug="+encodeURIComponent(slug)); if(pr.error){ if(!quiet)toast(pr.error,true); return; }
-  PROJ=slug; TIER=tier==="tier2"?"tier2":"tier1"; SEL_STEP=null; VIEWING=null;
+  PROJ=slug; TIER=CFG.tierKeys.includes(tier)?tier:"tier1"; SEL_STEP=null; VIEWING=null;
   try{localStorage.setItem("proj",slug);localStorage.setItem("tier",TIER);}catch{}
   $("#no-sel").hidden=true; $("#sel").hidden=false;
   PR=pr; render(); refreshProjects(); openStream();
@@ -430,15 +456,20 @@ async function reload(){ if(!PROJ)return; const pr=await api("/api/project?slug=
 
 function render(){
   $("#proj-name").textContent=PR.name;
-  for(const t of ["tier1","tier2"]){ const v=PR.view[t]; const n=v.steps.filter(s=>DONE(s.status)).length; const run=v.steps.find(s=>s.status==="running");
+  for(const t of CFG.tierKeys){ const v=PR.view[t]; const n=v.steps.filter(s=>DONE(s.status)).length; const run=v.steps.find(s=>s.status==="running");
     const el=$("#tt-"+t); el.setAttribute("aria-selected",String(TIER===t));
-    el.innerHTML=`<div class="t">${esc(CFG.tiers[t].title.replace(/^Tier \d · /,`Tier ${t.slice(-1)}: `))}</div><div class="s">${run?`Running step ${esc(run.num)}`:`${n} of ${v.steps.length} steps done`}${t==="tier2"?` · ${v.mode} mode`:(PR.tier1.externalOutput?" · imported":"")}</div>`; }
+    el.innerHTML=`<div class="t">${esc(CFG.tiers[t].title.replace(/^Tier \d · /,`Tier ${t.slice(-1)}: `))}</div><div class="s">${run?`Running step ${esc(run.num)}`:`${n} of ${v.steps.length} steps done`}${t==="tier2"?` · ${v.mode} mode`:t==="tier1"&&PR.tier1.externalOutput?" · imported":t==="tier3"&&v.mode!=="evaluate"?` · ${v.mode}`:""}</div>`; }
   // note under the tiers
   const note=$("#tier-note");
-  if(TIER==="tier2"){ const t1done=PR.view.tier1.steps.every(s=>DONE(s.status));
+  const tierDone=(t)=>PR.view[t].steps.every(s=>DONE(s.status));
+  if(TIER==="tier3"){ const missing=["tier1","tier2"].filter(t=>!tierDone(t)).map(t=>`tier ${t.slice(-1)}`);
+    note.innerHTML=`Reads tier 1's bundles (functions, SBOMs, source maps) and tier 2's reference automatically, and decides which packages and versions are in each bundle. `+(missing.length?`<span class="warn">${missing.join(" and ")} ${missing.length>1?"aren't":"isn't"} finished yet.</span>`:`<b>Tiers 1 and 2 are complete.</b>`); }
+  else if(TIER==="tier2"){ const t1done=tierDone("tier1");
     note.innerHTML=`Reads tier 1's output automatically. `+(t1done?`<b>Tier 1 is complete.</b>`:`<span class="warn">Tier 1 isn't finished yet — run or import it first.</span>`)+(view().mode==="streamed"?` Streamed mode keeps ${keepSummary()} and deletes the rest as each package finishes.`:""); }
   else note.innerHTML = PR.tier1.externalOutput ? `Tier 1's output was imported from <b>${esc(PR.tier1.externalOutput)}</b>.` : `Bundles are the test bed: they are always kept, and a clean redo moves old ones to <b>_archived_bundles</b> instead of deleting them.`;
   $("#pkgs-tab").hidden = TIER!=="tier2";
+  $("#report-tab").hidden = TIER!=="tier3";
+  if(TIER!=="tier3" && PANE==="report") showPane("log");
   $$("[data-tier2]").forEach(b=>b.hidden=TIER!=="tier2");
   if(TIER!=="tier2" && PANE==="pkgs") showPane("log");
   renderRoute();
@@ -477,7 +508,7 @@ function renderRoute(){
   if(isBusy){ btn.textContent="Stop"; btn.className="btn stop big"; btn.onclick=stop; why.textContent="Stopping ends the current step; finished work is kept."; }
   else if(!f){ btn.textContent="All steps done"; btn.className="btn big"; btn.disabled=true; why.textContent="To run again, open a step and choose Redo from here."; return; }
   else { btn.textContent = anyDone?`Continue from step ${f.num}`:"Run the whole tier"; btn.className="btn primary big"; btn.onclick=()=>run("continue");
-    why.textContent = f.status==="error" ? `Step ${f.num} failed last time; continuing runs it again.` : (TIER==="tier2"&&!PR.view.tier1.steps.every(s=>DONE(s.status)) ? "Tier 1 has to finish first." : ""); }
+    why.textContent = f.status==="error" ? `Step ${f.num} failed last time; continuing runs it again.` : (TIER==="tier2"&&!PR.view.tier1.steps.every(s=>DONE(s.status)) ? "Tier 1 has to finish first." : TIER==="tier3"&&!["tier1","tier2"].every(t=>PR.view[t].steps.every(s=>DONE(s.status))) ? "Tiers 1 and 2 have to finish first." : ""); }
   btn.disabled=false;
 }
 
@@ -547,8 +578,24 @@ function backToLive(){ VIEWING=null; openStream(); }
 $("#log-live").onclick=backToLive;
 
 // ---------- panes ----------
-function showPane(name){ PANE=name; $$(".tab").forEach(t=>t.setAttribute("aria-selected",String(t.dataset.pane===name))); for(const p of ["log","files","pkgs","console"]) $("#pane-"+p).hidden=p!==name; if(name==="files")loadFiles(); if(name==="pkgs")loadPkgs(); }
+// ---------- tier 3 report (report.md: headings, paragraphs, lists, tables, **bold**, *italic*, `code`) ----------
+function mdInline(t){ return esc(t).replace(/`([^`]+)`/g,"<code>$1</code>").replace(/\*\*([^*]+)\*\*/g,"<b>$1</b>").replace(/\*([^*]+)\*/g,"<i>$1</i>"); }
+function mdToHtml(md){ const out=[]; const lines=md.split("\n"); let i=0;
+  while(i<lines.length){ const l=lines[i];
+    if(/^#{1,3} /.test(l)){ const n=l.match(/^#+/)[0].length; out.push(`<h${n}>${mdInline(l.slice(n+1))}</h${n}>`); i++; continue; }
+    if(/^\|/.test(l)){ const rows=[]; while(i<lines.length&&/^\|/.test(lines[i])) rows.push(lines[i++]);
+      const cells=(r)=>r.replace(/^\||\|$/g,"").split("|").map(c=>c.trim()); const body=rows.filter((r,k)=>k!==1||!/^\|[-| ]+\|$/.test(r));
+      out.push(`<table><thead><tr>${cells(body[0]).map(c=>`<th>${mdInline(c)}</th>`).join("")}</tr></thead><tbody>${body.slice(1).map(r=>`<tr>${cells(r).map(c=>`<td>${mdInline(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>`); continue; }
+    if(/^- /.test(l)){ const items=[]; while(i<lines.length&&/^- /.test(lines[i])) items.push(lines[i++].slice(2)); out.push(`<ul>${items.map(x=>`<li>${mdInline(x)}</li>`).join("")}</ul>`); continue; }
+    if(l.trim()){ const para=[]; while(i<lines.length&&lines[i].trim()&&!/^(#|\||- )/.test(lines[i])) para.push(lines[i++]); out.push(`<p>${mdInline(para.join(" "))}</p>`); continue; }
+    i++; }
+  return out.join(""); }
+async function loadReport(){ const box=$("#report"); const r=await api("/api/project/report?slug="+encodeURIComponent(PROJ));
+  if(r.error||!r.text){ box.innerHTML=`<p class="empty">${esc(r.error||"No report yet: run step 03.")}</p>`; $("#report-sum").textContent="Step 03's report.md"; return; }
+  $("#report-sum").textContent=`${r.path} · ${fmtWhen(r.mtime)}`; box.innerHTML=mdToHtml(r.text); }
+function showPane(name){ PANE=name; $$(".tab").forEach(t=>t.setAttribute("aria-selected",String(t.dataset.pane===name))); for(const p of ["log","files","pkgs","report","console"]) $("#pane-"+p).hidden=p!==name; if(name==="files")loadFiles(); if(name==="pkgs")loadPkgs(); if(name==="report")loadReport(); }
 $$(".tab").forEach(t=>t.onclick=()=>showPane(t.dataset.pane));
+$("#report-refresh").onclick=loadReport;
 
 // files, grouped by top folder
 const KEPT_ALWAYS=/^(03_bundles_minified|05_selected_bundles|_archived_bundles)$/;
@@ -596,8 +643,16 @@ menu.onclick=async(e)=>{ const a=e.target.closest("button")?.dataset.act; if(!a)
   if(a==="delete") deleteProject(PROJ, PR.name, PR);
 };
 async function deleteProject(slug, name, pr){
-  const running=pr&&pr.view&&["tier1","tier2"].some(t=>pr.view[t].steps.some(s=>s.status==="running"));
+  const running=pr&&pr.view&&CFG.tierKeys.some(t=>pr.view[t]&&pr.view[t].steps.some(s=>s.status==="running"));
   if(running){ toast(`“${name}” is running. Stop it before deleting it.`,true); return; }
+  if(pr&&pr.where==="opened"){
+    const ok=await ask({title:`Remove “${name}” from the list?`, yes:"Remove from list",
+      body:`<p>The project stays in <b>${esc(pr.dir)}</b> with all its files. You can open it again with <b>Open an existing project</b>.</p>`});
+    if(!ok)return;
+    const r=await api("/api/project?slug="+encodeURIComponent(slug),{method:"DELETE"}); if(r.error){toast(r.error,true);return;}
+    if(PROJ===slug){ if(ES)ES.close(); PROJ=null; PR=null; try{localStorage.removeItem("proj");}catch{} $("#sel").hidden=true; $("#no-sel").hidden=false; }
+    refreshProjects(); toast(`Removed “${name}” from the list.`); return;
+  }
   const imported=pr&&pr.tier1&&pr.tier1.externalOutput;
   const ok=await ask({title:`Delete “${name}”?`, yes:"Delete project", danger:true,
     body:`<p>This removes the project and everything in its output folders, including its bundles, functions and logs. It can't be undone.</p>`+
@@ -668,7 +723,7 @@ $("#set-cancel").onclick=()=>$("#set-dlg").close();
 $("#set-save").onclick=async()=>{ const ok=await SET.onSave(SET.values); if(ok!==false) $("#set-dlg").close(); };
 
 $("#settings-btn").onclick=()=>{ if(busy()){ toast("Settings can be changed once this tier stops running.",true); return; }
-  openSettings({tier:TIER,current:PR[TIER].params,title:`${TIER==="tier1"?"Tier 1":"Tier 2"} settings — ${PR.name}`,
+  openSettings({tier:TIER,current:PR[TIER].params,title:`Tier ${TIER.slice(-1)} settings — ${PR.name}`,
     onSave:async(values)=>{ const r=await api("/api/project/params",{body:{slug:PROJ,tier:TIER,params:values}}); if(r.error){toast(r.error,true);return false;} toast("Settings saved."); reload(); }}); };
 
 // new project: name + tier-1 settings in the same panel
@@ -680,6 +735,16 @@ function newProject(){
   setTimeout(()=>$("#np-name").focus(),30);
 }
 $("#new-btn").onclick=newProject; $("#new-btn-2").onclick=newProject;
+$("#open-btn").onclick=async()=>{
+  const d=$("#ask-dlg");
+  const ok=await ask({title:"Open an existing project",yes:"Open",body:`<p style="color:var(--muted);font-size:13.5px">A project made earlier, e.g. in another copy of the pipeline. It stays where it is, and you can continue it from its first unfinished step. Give the project's folder (the one with <b>project.json</b>), or a <b>projects</b> folder to open all the projects in it.</p>
+    <div class="field-line"><label for="op-path">Folder (full path)</label><input type="text" id="op-path" placeholder="/path/to/old-copy/preprocessing/projects"/></div>`});
+  if(!ok)return; const path=d.querySelector("#op-path").value.trim(); if(!path){toast("Give the folder's full path.",true);return;}
+  const r=await api("/api/projects/open",{body:{path}}); if(r.error){toast(r.error,true);return;}
+  const parts=[]; if(r.opened.length)parts.push(`Opened ${r.opened.length} project(s)`); if(r.already.length)parts.push(`${r.already.length} already in the list`); if(r.failed.length)parts.push(`${r.failed.length} could not be read: ${r.failed.map(f=>f.problem).join("; ")}`);
+  toast(parts.join(". ")+".", !!r.failed.length&&!r.opened.length);
+  await refreshProjects(); const first=r.opened[0]||r.already[0]; if(first) selectProject(first.slug, TIER||"tier1");
+};
 $("#import-btn").onclick=async()=>{
   const d=$("#ask-dlg");
   const ok=await ask({title:"Import a tier-1 output folder",yes:"Import",body:`<p style="color:var(--muted);font-size:13.5px">Use a tier-1 run made elsewhere and run only tier 2 on it. The folder should contain <b>05_selected_bundles/selected_dependencies.csv</b>.</p>

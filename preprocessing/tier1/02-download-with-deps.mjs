@@ -60,6 +60,22 @@ const DONE = ".download-ok"; // marker file written after a successful install
 // Note: this looks at the declared "dependencies" of the latest version. What really ends
 // up in the bundle is still counted later by bundle-and-sbom.mjs.
 const ONLY_WITH_DEPS = process.env.ONLY_WITH_DEPS === "1";
+// SKIP_MISSING_DEPS=1 (off by default = faithful): when pnpm stops because a dependency does not
+// exist on npm ("… is not in the npm registry" / 404, or "No matching version found" for the
+// version asked for), install again without it, using pnpm's
+// own `overrides` with "-" (= remove this dependency). The removed names are recorded
+// (missingDepsRemoved) so these packages can be reported separately. pnpm only.
+const SKIP_MISSING = process.env.SKIP_MISSING_DEPS === "1";
+// the dependency pnpm could not find, from its error output
+function missingDependency(text) {
+  const a = text.match(/(\S+) is not in the npm registry/);
+  if (a) return a[1];
+  const v = text.match(/No matching version found for (@?[^@\s]+)@\S+/); // the name exists, but not the version asked for
+  if (v) return v[1];
+  const b = text.match(/ERR_PNPM_FETCH_404\s+GET\s+(\S+?):?\s+Not Found/);
+  if (b) { try { return decodeURIComponent(new URL(b[1]).pathname.slice(1)); } catch {} }
+  return null;
+}
 const depCachePath = join(outDir, "dependency-check.json"); // name -> number of declared dependencies
 let depCache = {};
 try {
@@ -94,16 +110,19 @@ async function download({ rank, name }) {
     if (deps === 0) return { rank, name, ok: true, noDependencies: true };
   }
 
+  const removed = []; // dependencies left out because they do not exist on npm (SKIP_MISSING_DEPS)
   for (let attempt = 1; attempt <= 3; attempt++) {
     try {
       rmSync(dir, { recursive: true, force: true }); // clean partial install
       mkdirSync(dir, { recursive: true });
-      writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "holder", version: "1.0.0", private: true }));
+      writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "holder", version: "1.0.0", private: true,
+        ...(removed.length ? { pnpm: { overrides: Object.fromEntries(removed.map((d) => [d, "-"])) } } : {}) }));
       const args =
         PM === "pnpm"
           // --no-optional / --omit=optional: faithful to generate_bundles.py, which installed
           // with `pnpm install --save-exact --no-optional --ignore-scripts`
-          ? ["add", name, "--ignore-scripts", "--no-optional", "--store-dir", storeDir, "--config.auto-install-peers=true", "--reporter=silent"]
+          // (--loglevel=error instead of a silent reporter: same install, but pnpm's reason is kept when it fails)
+          ? ["add", name, "--ignore-scripts", "--no-optional", "--store-dir", storeDir, "--config.auto-install-peers=true", "--loglevel=error"]
           : ["install", name, "--ignore-scripts", "--omit=optional", "--no-audit", "--no-fund", "--legacy-peer-deps", "--prefer-offline", "--loglevel=error"];
       // Never let git/ssh stop and ask a question (e.g. a dependency pointing at a private
       // GitHub repo): with these settings it fails right away and the package is marked FAIL.
@@ -113,13 +132,23 @@ async function download({ rank, name }) {
       // "always tar the download": collapse the whole install tree (holder package.json +
       // node_modules) into ONE .tgz, and keep a tiny meta sidecar so the bundler can learn
       // name/version without extracting. Then remove the tree of many small files.
-      writeFileSync(join(outDir, `${folder}.meta.json`), JSON.stringify({ name, version }));
+      writeFileSync(join(outDir, `${folder}.meta.json`), JSON.stringify({ name, version, ...(removed.length ? { missingDepsRemoved: removed } : {}) }));
       await run("tar", ["-czf", tgz, "-C", dir, "."], { timeout: 5 * 60_000, maxBuffer: 20 * 1024 * 1024, shell: isWin });
       rmSync(dir, { recursive: true, force: true });
-      return { rank, name, ok: true, version };
+      return { rank, name, ok: true, version, ...(removed.length ? { missingDepsRemoved: removed } : {}) };
     } catch (e) {
+      const text = `${e.stdout ?? ""}\n${e.stderr ?? ""}`;
+      const missing = SKIP_MISSING && PM === "pnpm" ? missingDependency(text) : null;
+      if (missing && missing !== name && !removed.includes(missing) && removed.length < 100) {
+        removed.push(missing);
+        console.log(`  ${name}: dependency ${missing} does not exist on npm — installing without it`);
+        attempt--; // not a failed attempt: try again without that dependency
+        continue;
+      }
+      // the error as pnpm/npm gave it (e.g. "ERR_PNPM_FETCH_404 … core-x is not in the npm registry")
+      const reason = text.split("\n").map((l) => l.trim()).filter((l) => /ERR_|not in the npm registry|No matching version|error|Forbidden|Not Found/i.test(l)).slice(0, 2).join(" ");
       if (attempt === 3)
-        return { rank, name, ok: false, error: String(e.stderr || e.message).split("\n").filter(Boolean).slice(0, 2).join(" ").slice(0, 300) };
+        return { rank, name, ok: false, error: (reason || String(e.stderr || e.message).split("\n").filter(Boolean).slice(0, 2).join(" ")).slice(0, 300) };
       await new Promise((r) => setTimeout(r, 3000 * attempt));
     }
   }

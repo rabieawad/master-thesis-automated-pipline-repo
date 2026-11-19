@@ -135,7 +135,9 @@ test("modeOf: STREAM=1 is streamed, 0 is batch, absent stays batch (old projects
 
 test("step ids and labels are mode-aware: batch 01-05, streamed 01/06/07", () => {
   assert.deepEqual(T2.stepIdsFor("batch"), ["01", "02", "03", "04", "05"]);
-  assert.deepEqual(T2.stepIdsFor("streamed"), ["01", "06", "07"]);
+  assert.deepEqual(T2.stepIdsFor("streamed"), ["01", "06", "07", "08"]);
+  assert.deepEqual(T2.stepIdsFor("streamed", { LINK_EDITS: "0" }), ["01", "06", "07"], "the lineage step can be switched off");
+  assert.deepEqual(T2.stepIdsFor("batch", { LINK_EDITS: "1" }), ["01", "02", "03", "04", "05"], "batch mode has no per-package files to link");
   assert.match(T2.STEP_LABELS.streamed["06"], /^02–05 · Stream packages/);
   assert.match(T2.STEP_LABELS.streamed["07"], /^05 · Merge/);
   assert.equal(T2.STEP_LABELS.batch["05"], T2.STEPS.find((s) => s.id === "05").label);
@@ -145,7 +147,8 @@ test("step ids and labels are mode-aware: batch 01-05, streamed 01/06/07", () =>
 test("stepDirs: streamed step 06 owns the per-package output, 07 only its own files", () => {
   const t = tmp(); try {
     const sd = T2.stepDirs(t.dir, "streamed");
-    assert.deepEqual(Object.keys(sd), ["01", "06", "07"]);
+    assert.deepEqual(Object.keys(sd), ["01", "06", "07", "08"]);
+    assert.match(String(sd["08"][0]), /05_deduplicated_functions[\\/]lineages$/, "a clean re-run of the lineage step deletes only the lineage files");
     const owns06 = sd["06"].map((p) => String(p));
     for (const frag of ["02_downloaded_packages", "03_pseudo_bundles", "04_extracted_functions", "_work", "partials", "versions", "groups"])
       assert.ok(owns06.some((p) => p.includes(frag)), `step 06 owns ${frag}`);

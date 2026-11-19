@@ -150,3 +150,12 @@ test("buildCommand 08 streams the right list with the right options", () => {
     assert.ok(T1.protectedDirs(t.dir).includes(d.D3));
   } finally { t.cleanup(); }
 });
+
+test("SKIP_MISSING_DEPS is off by default and reaches every download when on", () => {
+  const L = T1, base = { ...L.DEFAULTS, outDir: "/o" };
+  assert.equal(L.DEFAULTS.SKIP_MISSING_DEPS, "0");
+  for (const [step, MODE, STREAM] of [["02", "expensive", "0"], ["03", "cheap", "0"], ["08", "expensive", "1"], ["08", "cheap", "1"]]) {
+    assert.equal(L.buildCommand(step, { ...base, MODE, STREAM }).env.SKIP_MISSING_DEPS, undefined, `${step} ${MODE}: faithful by default`);
+    assert.equal(L.buildCommand(step, { ...base, MODE, STREAM, SKIP_MISSING_DEPS: "1" }).env.SKIP_MISSING_DEPS, "1", `${step} ${MODE}`);
+  }
+});

@@ -23,11 +23,12 @@ export const GROUPS = [
   { id: "performance", title: "Performance", help: "Parallel work" },
 ];
 export const PARAMS = [
-  { key: "STREAM", group: "mode", label: "Streamed (one package at a time)", help: "Each package: download → check it can be bundled → bundle + SBOM → Claude repair if on → delete the download. Only bundles, SBOMs, functions, reports and logs stay on disk. Off = batch: every download is kept until you delete it.", type: "bool", default: "1" },
+  { key: "STREAM", group: "mode", label: "Streamed (one package at a time)", help: "Each package: download → check it can be bundled → bundle + SBOM → delete the download. Packages that fail are postponed, and Claude (if on) repairs them after all packages are done. Only bundles, SBOMs, functions, reports and logs stay on disk. Off = batch: every download is kept until you delete it.", type: "bool", default: "1" },
   { key: "KEEP_ARTIFACTS", group: "mode", label: "Also keep", help: "In streamed mode the downloads are deleted as soon as each package is bundled. Tick to keep them.", type: "multi",
     options: [{ value: "downloads", label: "Downloaded packages", help: "02_downloaded_packages/*.tgz — each holds a package with all its dependencies (large)" }],
     fixed: [{ label: "Bundles and source maps", help: "the test bed — always kept" }, { label: "SBOMs and module reports", help: "always kept" }, { label: "Extracted functions", help: "always kept" }, { label: "Logs, per-package results, Claude's reports", help: "always kept" }],
     default: "", when: { STREAM: "1" } },
+  { key: "PACK_OUTPUTS", group: "mode", label: "Pack outputs into .tgz when a run ends", help: "Each step's per-package files (bundles, source maps, SBOMs, functions, kept downloads…) go into one .tgz per kind, e.g. 03_bundles_minified/bundles.tgz. Logs, lists, summaries and reports stay as plain files. They are unpacked automatically before the next run.", type: "bool", default: "1" },
   { key: "MODE", group: "mode", label: "Mode", help: "expensive: download and bundle ALL crawled packages, then pick the sample. cheap: pick the sample from registry metadata first, then download and bundle only the sample.", type: "select", options: ["expensive", "cheap"], default: "expensive" },
   { key: "TOP_N", group: "source", label: "Top packages to crawl", help: "How many of jsDelivr's most-used packages are listed (step 01).", type: "number", default: "1500" },
   { key: "PERIOD", group: "source", label: "Popularity period", help: "jsDelivr statistics period used to rank packages (step 01).", type: "select", options: ["day", "week", "month", "year"], default: "month" },
@@ -39,9 +40,11 @@ export const PARAMS = [
   { key: "MIN_DEPS", group: "selection", label: "Minimum dependencies", help: "0 allows packages without dependencies. Ignored when a distribution is set.", type: "number", default: "0" },
   { key: "MAX_DEPS", group: "selection", label: "Maximum dependencies", help: "Ignored when a distribution is set.", type: "number", default: "20" },
   { key: "SEED", group: "selection", label: "Random seed", help: "Same seed, same sample.", type: "number", default: "42" },
+  { key: "SKIP_MISSING_DEPS", group: "source", label: "Leave out dependencies that don't exist on npm", help: "Off = faithful to Aletheia: a package whose dependency is not on npm cannot be installed. On = install it without those dependencies (pnpm overrides) and label it bundled_without_missing_deps, with the names left out, so it can be reported separately.", type: "bool", default: "0" },
   { key: "CHECK_BUNDLEABLE", group: "bundling", label: "Check each package can be bundled first", help: "Asks webpack's own resolver what the bundler's entry would load, and skips packages webpack cannot bundle (no JavaScript entry, or a stylesheet entry) without bundling them or calling Claude. Streamed mode only.", type: "bool", default: "1", when: { STREAM: "1" } },
+  { key: "WORK_DIR", group: "bundling", label: "Temporary folder for bundling", help: "Where each package is unpacked and bundled (thousands of small files, deleted after each package). Blank = inside the downloads folder. Use a folder on a fast local disk (e.g. /tmp) if the output drive gives I/O errors. Streamed mode only.", type: "text", default: "", when: { STREAM: "1" } },
   { key: "MINIFY", group: "bundling", label: "Minify bundles", help: "On = faithful to Aletheia (webpack minimize: true). Off = the un-minified thesis variant.", type: "bool", default: "1" },
-  { key: "CLAUDE_REPAIR", group: "claude", label: "Repair failed packages with Claude", help: "Adds a step after bundling: Claude repairs each failed package (never the bundler), then the unchanged bundler runs again. Needs Claude Code installed and signed in.", type: "bool", default: "0" },
+  { key: "CLAUDE_REPAIR", group: "claude", label: "Repair failed packages with Claude", help: "After all packages are bundled, Claude repairs the failed ones (never the bundler), then the unchanged bundler runs again. Needs Claude Code installed and signed in.", type: "bool", default: "0" },
   { key: "CLAUDE_MAX_PACKAGES", group: "claude", label: "Packages per run", help: "At most this many failed packages are tried per run; run the step again for the rest.", type: "number", default: "20", when: { CLAUDE_REPAIR: "1" } },
   { key: "CLAUDE_MAX_TURNS", group: "claude", label: "Turns per package", help: "Claude stops after this many steps on one package.", type: "number", default: "40", when: { CLAUDE_REPAIR: "1" } },
   { key: "CLAUDE_BUDGET_USD", group: "claude", label: "Spending cap per package (USD)", help: "Blank = no cap.", type: "text", default: "", when: { CLAUDE_REPAIR: "1" } },
@@ -64,7 +67,7 @@ export const STEP_LABELS = {
     "05": "05 · Collect selected bundles",
     "06": "06 · Extract functions",
     "07": "03b · Claude repair of failed bundles",
-    "08": "02–03 · Stream packages (download → check → bundle → delete)",
+    "08": "02–03 · Stream packages (download → check → bundle → delete; Claude on failures at the end)",
   },
   cheap: {
     "01": "01 · Crawl + dependency/version metadata",
@@ -74,7 +77,7 @@ export const STEP_LABELS = {
     "05": "05 · Collect selected bundles",
     "06": "06 · Extract functions",
     "07": "04b · Claude repair of failed bundles",
-    "08": "03–04 · Stream the sample (download → check → bundle → delete)",
+    "08": "03–04 · Stream the sample (download → check → bundle → delete; Claude on failures at the end)",
   },
 };
 
@@ -96,7 +99,7 @@ export function stepIdsFor(params = {}) {
 
 export const STEPS = [
   { id: "all", label: "Whole pipeline (01 → 06)" },
-  { id: "setup", label: "Setup: install webpack / meriyah / escodegen" },
+  { id: "setup", label: "Setup: install the pipeline's tools at their locked versions (npm ci)" },
   ...ALL_STEP_IDS.map((id) => ({ id, label: STEP_LABELS.expensive[id] })),
 ];
 
@@ -134,6 +137,8 @@ export function protectedDirs(outRoot) {
 }
 
 // The bundler only reads UNMINIFIED=1 (MINIFY was passed but never read), so translate here.
+// leave out dependencies that do not exist on npm (a labelled deviation; off by default)
+const skipMissing = (p) => (String(p.SKIP_MISSING_DEPS ?? "0") === "1" ? { SKIP_MISSING_DEPS: "1" } : {});
 const bundlerEnv = (p) => (String(p.MINIFY ?? "1") === "0" ? { UNMINIFIED: "1" } : {});
 
 // Returns { cmd, args, cwd, env } for a step. Mirrors run-pipeline.sh exactly.
@@ -158,7 +163,9 @@ export function buildCommand(step, p) {
         },
       };
     case "setup":
-      return { cmd: "npm", args: ["install", "--no-save", "--no-audit", "--no-fund", "webpack", "meriyah@7.0.0", "escodegen@2.1.0"], cwd: HERE, env: {} };
+      // every tool, at the exact versions in package-lock.json (webpack 5.112.2, meriyah 7.0.0, …),
+      // installed once at the top of the pipeline where every script finds them
+      return { cmd: "npm", args: ["ci", "--no-audit", "--no-fund"], cwd: dirname(HERE), env: {} };
 
     // ----- CHEAP MODE: 01 crawl+metadata, 02 select, 03 download sample, 04 bundle sample -----
     case "01":
@@ -170,9 +177,9 @@ export function buildCommand(step, p) {
         if (p.DEP_DIST && String(p.DEP_DIST).trim()) a.push("--dist", String(p.DEP_DIST).trim());
         return { cmd: node, args: a, cwd: HERE, env: {} };
       }
-      return { cmd: node, args: [join(HERE, "02-download-with-deps.mjs"), join(d.D1, "jsdelivr-top.json"), d.D2, p.CONC, p.DOWNLOAD_LIMIT], cwd: HERE, env: { ONLY_WITH_DEPS: onlyWithDeps } };
+      return { cmd: node, args: [join(HERE, "02-download-with-deps.mjs"), join(d.D1, "jsdelivr-top.json"), d.D2, p.CONC, p.DOWNLOAD_LIMIT], cwd: HERE, env: { ONLY_WITH_DEPS: onlyWithDeps, ...skipMissing(p) } };
     case "03":
-      if (MODE === "cheap") return { cmd: node, args: [join(HERE, "02-download-with-deps.mjs"), join(d.D4, "selected-list.json"), d.D2, p.CONC, "all"], cwd: HERE, env: { ONLY_WITH_DEPS: "0" } };
+      if (MODE === "cheap") return { cmd: node, args: [join(HERE, "02-download-with-deps.mjs"), join(d.D4, "selected-list.json"), d.D2, p.CONC, "all"], cwd: HERE, env: { ONLY_WITH_DEPS: "0", ...skipMissing(p) } };
       return { cmd: node, args: [join(HERE, "03-bundle-and-sbom.mjs"), d.D2, d.D3, p.BUNDLE_CONC], cwd: HERE, env: { MINIFY: p.MINIFY, ...bundlerEnv(p) } };
     case "04":
       if (MODE === "cheap") return { cmd: node, args: [join(HERE, "03-bundle-and-sbom.mjs"), d.D2, d.D3, p.BUNDLE_CONC], cwd: HERE, env: { MINIFY: p.MINIFY, ...bundlerEnv(p) } };
@@ -194,13 +201,14 @@ export function buildCommand(step, p) {
         "--conc", pos(p.CONC, "4"), "--bundle-conc", pos(p.BUNDLE_CONC, "1"), "--limit", cheap ? "all" : String(p.DOWNLOAD_LIMIT || "all"),
         "--keep", String(p.KEEP_ARTIFACTS ?? "")];
       if (String(p.CHECK_BUNDLEABLE ?? "1") === "0") a.push("--no-check");
+      if (String(p.WORK_DIR ?? "").trim()) a.push("--work-dir", String(p.WORK_DIR).trim());
       if (String(p.CLAUDE_REPAIR ?? "0") === "1") {
         a.push("--claude", "--max", pos(p.CLAUDE_MAX_PACKAGES, "20"), "--max-turns", pos(p.CLAUDE_MAX_TURNS, "40"),
           "--timeout-min", pos(p.CLAUDE_TIMEOUT_MIN, "20"), "--claude-bin", String(p.CLAUDE_BIN ?? "").trim() || "claude");
         if (String(p.CLAUDE_BUDGET_USD ?? "").trim()) a.push("--budget-usd", String(p.CLAUDE_BUDGET_USD).trim());
         if (String(p.CLAUDE_MODEL ?? "").trim()) a.push("--model", String(p.CLAUDE_MODEL).trim());
       }
-      return { cmd: node, args: a, cwd: HERE, env: { ...bundlerEnv(p), ONLY_WITH_DEPS: cheap ? "0" : onlyWithDeps } };
+      return { cmd: node, args: a, cwd: HERE, env: { ...bundlerEnv(p), ...skipMissing(p), ONLY_WITH_DEPS: cheap ? "0" : onlyWithDeps } };
     }
     case "07": {
       // Claude repair: same packages folder and bundle folder as the bundling step, and the

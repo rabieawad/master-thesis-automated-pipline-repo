@@ -18,6 +18,7 @@ export const GROUPS = [
   { id: "packages", title: "Packages & versions", help: "Which packages and which of their versions are indexed" },
   { id: "extraction", title: "Pseudo-bundling & extraction", help: "How each version is bundled and which functions are kept" },
   { id: "dedup", title: "Deduplication", help: "When two functions count as the same" },
+  { id: "lineage", title: "Function lineages", help: "Linking the edited versions of each function across versions" },
   { id: "performance", title: "Performance", help: "Parallel work" },
 ];
 export const KEEP_OPTIONS = [
@@ -29,6 +30,7 @@ export const KEEP_OPTIONS = [
 export const PARAMS = [
   { key: "INPUT_DIR", group: "packages", label: "Tier-1 output folder", help: "Set automatically in a project.", type: "text", default: "" },
   { key: "STREAM", group: "mode", label: "Streamed mode", help: "One package at a time: download → bundle → extract → collect, keeping only its final function collection. Off = batch mode, where every intermediate file of every package is on disk at once.", type: "bool", default: "1" },
+  { key: "PACK_OUTPUTS", group: "mode", label: "Pack outputs into .tgz when a run ends", help: "Each step's per-package files (pseudo-bundles, function files, packages/<package>.json, kept downloads…) go into one .tgz per kind, e.g. 05_deduplicated_functions/packages.tgz. Logs, lists, summaries and the merged dataset stay as plain files. They are unpacked automatically before the next run.", type: "bool", default: "1" },
   { key: "KEEP_ARTIFACTS", group: "mode", label: "Keep these intermediate files", help: "Ticked steps keep all their files; unticked ones are deleted as soon as each package is done.", type: "multi", options: KEEP_OPTIONS, fixed: [{ label: "Each package's function collection", help: "packages/<package>.json — always kept" }, { label: "Logs", help: "always kept" }, { label: "Per-version records and group manifests", help: "always kept" }], default: "03", modes: ["streamed"] },
   { key: "VERSIONS", group: "packages", label: "Versions per package", help: "all = every published stable version (Aletheia's full index). minor = patches of the observed major.minor. latest = newest only. exact = the observed version only.", type: "select", options: ["all", "minor", "latest", "exact"], default: "all" },
   { key: "INCLUDE_PACKAGE", group: "packages", label: "Include the selected packages themselves", help: "Off = index only their dependencies.", type: "bool", default: "1" },
@@ -37,6 +39,10 @@ export const PARAMS = [
   { key: "DEDUP_MODE", group: "dedup", label: "Compare bodies as", help: "normalized: locals renamed v0, v1, … so a renamed variable still matches. exact: raw body text.", type: "select", options: ["normalized", "exact"], default: "normalized" },
   { key: "DEDUP_IDENTITY", group: "dedup", label: "Identity check", help: "string: keep each function's full key and stop on any id collision. hash: compare the truncated sha256 ids only.", type: "select", options: ["string", "hash"], default: "string" },
   { key: "DEDUP_STRICT_TYPE", group: "dedup", label: "Keep declarations and expressions apart", help: "On: `function f(){}` and `f = function(){}` with the same body stay two records.", type: "bool", default: "0" },
+  { key: "LINK_EDITS", group: "lineage", label: "Function lineages (history + markers)", help: "Adds a step after the merge: within each package, the edited versions of each function are linked into a lineage. lineages/<package>.json gets each lineage's history (born, edited, reverted, removed, reappeared, with the code changes), checked code markers and a rule per variant for version detection; packages/<package>.json gets only a lineage tag per function. Streamed mode only.", type: "bool", default: "1", when: { STREAM: "1" } },
+  { key: "LINK_MIN_SIMILARITY", group: "lineage", label: "Minimum similarity for a link", help: "0–1. Higher = fewer, safer links; lower = more links, more false ones. 0.5 by default.", type: "number", default: "0.5", when: { STREAM: "1" } },
+  { key: "LINK_TRIVIAL", group: "lineage", label: "Link trivial functions too", help: "Off: tiny functions (see Trivial below) are never linked, because they look alike and would create false links.", type: "bool", default: "0", when: { STREAM: "1" } },
+  { key: "LINK_MAX_RULE", group: "lineage", label: "Markers per variant rule (at most)", help: "How many markers a rule may combine to tell a variant from its siblings. 3 by default.", type: "number", default: "3", when: { STREAM: "1" } },
   { key: "TRIVIAL_NODES", group: "dedup", label: "Trivial below (AST nodes)", help: "Functions smaller than this are flagged trivial, e.g. `{}` or `{ return v0; }`.", type: "number", default: "6" },
   { key: "NEAR_THRESHOLD", group: "dedup", label: "List near-duplicates from (Jaccard)", help: "e.g. 0.85 lists pairs at least that similar; they are never merged. 0 = off.", type: "number", default: "0" },
   { key: "CONC", group: "performance", label: "Parallel registry queries and downloads", help: "Used by the version list and the downloads.", type: "number", default: "6" },
@@ -66,16 +72,21 @@ export const STEP_LABELS = {
     "01": "01 · Build reference list (+ version expansion)",
     "06": "02–05 · Stream packages (download → bundle → extract → collect)",
     "07": "05 · Merge",
+    "08": "06 · Function lineages (history + markers)",
   },
 };
 
 // Which numbered steps a mode actually runs, in order.
-export const STEP_IDS = { batch: ["01", "02", "03", "04", "05"], streamed: ["01", "06", "07"] };
-export const ALL_STEP_IDS = ["01", "02", "03", "04", "05", "06", "07"];
-export const stepIdsFor = (mode = "batch") => STEP_IDS[mode] ?? STEP_IDS.batch;
+export const STEP_IDS = { batch: ["01", "02", "03", "04", "05"], streamed: ["01", "06", "07", "08"] };
+export const ALL_STEP_IDS = ["01", "02", "03", "04", "05", "06", "07", "08"];
+// the lineage step ("08") runs in streamed mode unless LINK_EDITS is switched off
+export const stepIdsFor = (mode = "batch", params = {}) => {
+  const ids = STEP_IDS[mode] ?? STEP_IDS.batch;
+  return String(params.LINK_EDITS ?? "1") === "0" ? ids.filter((id) => id !== "08") : ids;
+};
 
 export const STEPS = [
-  { id: "all", label: "Whole reference pipeline (01 → 05)" },
+  { id: "all", label: "Whole reference pipeline" },
   { id: "setup", label: "Setup: install bundler + collector deps" },
   ...ALL_STEP_IDS.map((id) => ({ id, label: STEP_LABELS.batch[id] ?? STEP_LABELS.streamed[id] })),
 ];
@@ -104,6 +115,7 @@ export function stepDirs(outRoot, mode = "batch") {
       "01": [d.D1],
       "06": [d.D2, d.D3, d.D4, join(d.OUT, "_work"), join(d.D5, "partials"), join(d.D5, "versions"), join(d.D5, "groups"), join(d.LOGS, "stream")],
       "07": ["unique_functions.jsonl", "occurrences.csv", "version_index.json", "near_duplicates.csv", "summary.json"].map((f) => join(d.D5, f)),
+      "08": [join(d.D5, "lineages")], // the lineage files; the tags in packages/ are rewritten on the re-run
     };
   }
   return { "01": [d.D1], "02": [d.D2], "03": [d.D3], "04": [d.D4], "05": [d.D5] };
@@ -131,7 +143,9 @@ export function buildCommand(step, p) {
         },
       };
     case "setup":
-      return { cmd: "npm", args: ["install", "--no-save", "--no-audit", "--no-fund", "@swc/core", "acorn", "acorn-loose", "acorn-walk", "astring", "meriyah@7.0.0", "escodegen@2.1.0"], cwd: HERE, env: {} };
+      // every tool, at the exact versions in package-lock.json (webpack 5.112.2, meriyah 7.0.0, …),
+      // installed once at the top of the pipeline where every script finds them
+      return { cmd: "npm", args: ["ci", "--no-audit", "--no-fund"], cwd: dirname(HERE), env: {} };
     case "01": {
       const a = [join(HERE, "01_build-list.mjs"), p.INPUT_DIR || ".", d.D1, "--versions", p.VERSIONS, "--conc", p.CONC];
       if (String(p.INCLUDE_PACKAGE) === "0") a.push("--no-package");
@@ -181,6 +195,13 @@ export function buildCommand(step, p) {
       if (Number(p.NEAR_THRESHOLD) > 0) a.push("--near", p.NEAR_THRESHOLD);
       const keep = String(p.KEEP_ARTIFACTS ?? "").split(",").map((s) => s.trim());
       if (keep.some((k) => k === "partials" || k === "all")) a.push("--keep-partials");
+      return { cmd: node, args: a, cwd: HERE, env: { NODE_OPTIONS: "--max-old-space-size=6144" } };
+    }
+    case "08": {
+      const a = [join(HERE, "08_link-edits.mjs"), d.D5];
+      if (p.LINK_MIN_SIMILARITY != null && String(p.LINK_MIN_SIMILARITY) !== "") a.push("--min-similarity", String(p.LINK_MIN_SIMILARITY));
+      if (String(p.LINK_TRIVIAL ?? "0") === "1") a.push("--include-trivial");
+      if (p.LINK_MAX_RULE != null && String(p.LINK_MAX_RULE) !== "") a.push("--max-rule", String(p.LINK_MAX_RULE));
       return { cmd: node, args: a, cwd: HERE, env: { NODE_OPTIONS: "--max-old-space-size=6144" } };
     }
     default:

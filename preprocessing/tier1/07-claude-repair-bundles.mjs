@@ -170,7 +170,7 @@ Every package gets the same report, so results can be compared across packages:
   "evidence": "the decisive error line or file fact, copied verbatim (at most 300 characters)",
   "changes": [ { "file": "pkg/...", "action": "added" | "changed" | "stubbed" | "removed", "reason": "why" } ],
   "still_represents_package": "why the bundle is still ${rec.name}@${rec.version} (only when repaired, else null)",
-  "explanation": "your own explanation in your own words: what you looked at, what you tried, and why it worked or could not work"
+  "explanation": "brief, in your own words: at most 3 sentences (400 characters) on what you found, what you did, and why it worked or could not"
 }
 \`\`\`
 
@@ -221,6 +221,9 @@ function runClaude(ws, logFile) {
 
 // Read and check Claude's REPAIR.json against the required shape. Returns
 // { valid, report } or { valid: false, problem }.
+const EXPLANATION_MAX = 400;
+// one line, at most EXPLANATION_MAX characters (the full text stays in repair.json)
+const briefText = (t) => { const x = String(t ?? "").replace(/\s+/g, " ").trim(); return x.length > EXPLANATION_MAX ? x.slice(0, EXPLANATION_MAX - 1) + "…" : x; };
 function readReport(file) {
   let r;
   try { r = JSON.parse(readFileSync(file, "utf8")); }
@@ -239,7 +242,7 @@ function readReport(file) {
 
 function writeReport() {
   writeFileSync(reportPath, JSON.stringify(report, null, 2) + "\n");
-  const cols = ["folder", "name", "version", "outcome", "category", "cause", "original_category", "original_error", "files_changed", "report_valid", "turns", "cost_usd", "note"];
+  const cols = ["folder", "name", "version", "outcome", "category", "cause", "original_category", "original_error", "files_changed", "report_valid", "turns", "cost_usd", "note", "explanation"];
   writeFileSync(join(REPAIR, "report.csv"), cols.join(",") + "\n" + report.map((r) => cols.map((c) => cell(r[c])).join(",")).join("\n") + "\n");
 }
 
@@ -326,9 +329,11 @@ for (const rec of failed) {
   const notes = [];
   if (claude.valid && claude.report.outcome !== outcome) notes.push(`Claude reported "${claude.report.outcome}" but the unchanged bundler says "${outcome}"`);
   if (c.timedOut) notes.push(`stopped after ${TIMEOUT_MIN} min`);
+  if (claude.valid && claude.report.explanation.length > EXPLANATION_MAX) notes.push(`explanation longer than the ${EXPLANATION_MAX} characters asked`);
+  const explanation = claude.valid ? claude.report.explanation : "";
   const row = { folder, name: meta.name, version: meta.version, outcome, category, cause,
     original_category: originalCategory, original_error: rec.error, files_changed: nChanged,
-    report_valid: claude.valid, turns: c.turns, cost_usd: c.costUsd, note: notes.join("; "), at: new Date().toISOString() };
+    report_valid: claude.valid, turns: c.turns, cost_usd: c.costUsd, note: notes.join("; "), explanation: briefText(explanation), at: new Date().toISOString() };
   // the standardized record for this package, with Claude's free explanation kept in full
   writeFileSync(join(ws, "repair.json"), JSON.stringify({
     package: meta.name, version: meta.version, outcome, category, cause,
@@ -354,11 +359,14 @@ for (const rec of failed) {
     writeSummary();
     repaired++;
   }
+  // the same block for every package, fields always in this order
+  const changeList = claude.valid ? claude.report.changes : [];
   console.log(resultLine(id, outcome, category, cause));
-  if (claude.valid && claude.report.explanation) console.log(`    explanation: ${String(claude.report.explanation).replace(/\s+/g, " ").slice(0, 600)}`);
-  if (verified) console.log(`    bundled: ${okLine.replace(/^BUNDLE_OK\s*/, "")}; ${nChanged} file(s) changed`);
-  for (const n of notes) console.log(`    note: ${n}`);
-  console.log(`    full record: claude_repair/${folder}/repair.json`);
+  console.log(`    bundler     : ${verified ? okLine.replace(/^BUNDLE_OK\s*/, "") : "still fails"}`);
+  console.log(`    changes     : ${changeList.length ? changeList.map((x) => `${x.action} ${x.file}`).join("; ") : "none"} (${nChanged} file(s) differ)`);
+  console.log(`    explanation : ${briefText(explanation) || "(none — " + (claude.problem ?? "no report") + ")"}`);
+  console.log(`    note        : ${notes.length ? notes.join("; ") : "-"}`);
+  console.log(`    record      : claude_repair/${folder}/repair.json`);
   report.push(row);
   writeReport();
 

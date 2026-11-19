@@ -1,0 +1,9 @@
+node_modules/
+projects/
+tmp/
+*-undeleted/
+_stream/
+.pnpm-store/
+*.tgz
+.DS_Store
+*.log

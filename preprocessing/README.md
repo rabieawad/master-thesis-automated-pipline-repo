@@ -1,11 +1,12 @@
-# Thesis pipeline — one project, two chained tiers
+# Thesis pipeline — one project, three chained tiers
 
-A **project** is made of two sub-pipelines that run one after the other:
+A **project** is made of three sub-pipelines that run one after the other:
 
 - **Tier 1 · Data preparation** (6 steps, +1 optional): crawl top packages → download → bundle+SBOM → *(optional: Claude repair of failed bundles)* → select sample → collect → extract functions.
 - **Tier 2 · Reference dataset** (5 steps): build version list → download → pseudo-bundle → extract functions → deduplicate functions across versions.
+- **Tier 3 · Detection** (3 steps): build a search index from tier 2 → detect which packages and versions are in each tier-1 bundle → report the metrics against the bundles' SBOMs. See [Tier 3](#tier-3--detection-which-packages-and-versions-are-in-a-bundle).
 
-**Tier 2's input is wired automatically to tier 1's output** — you never type a directory. You configure tier 2 *after* tier 1 has produced output (its parameters are edited later).
+**Tier 2's input is wired automatically to tier 1's output, and tier 3's to both** — you never type a directory. You configure tier 2 *after* tier 1 has produced output (its parameters are edited later).
 
 ## The control panel
 
@@ -19,7 +20,7 @@ progress bar per tier); on the right the open project:
   something runs.
 - **Activity panel** — *Log* (live output, or a step's saved log), *Files* (the tier's output grouped
   by folder with sizes; tier 1's bundle folders are marked *always kept*), *Packages* (tier 2: what to
-  include) and *Console* (a shell in the tier's output folder).
+  include), *Report* (tier 3: step 03's `report.md`) and *Console* (a shell in the tier's output folder).
 - **Settings** — grouped (e.g. tier 1: Mode, Package source, Sample selection, Bundling, Claude
   repair, Function extraction, Performance), with a search box across all settings, a short
   explanation under each, a dot on anything changed from its default and a one-click reset. Settings
@@ -105,7 +106,7 @@ Claude must write `REPAIR.json` in exactly this shape; the step validates it:
   "cause": "one sentence", "evidence": "the decisive error line, verbatim",
   "changes": [{ "file": "pkg/...", "action": "added | changed | stubbed | removed", "reason": "..." }],
   "still_represents_package": "... (when repaired)",
-  "explanation": "free text, in Claude's own words" }
+  "explanation": "brief, Claude's own words: at most 3 sentences (400 characters)" }
 ```
 
 The **outcome is what the unchanged bundler proves**, never only Claude's claim: if Claude says
@@ -117,14 +118,40 @@ bundled — gets one standard log line:
 
 ```
 RESULT | <name>@<version> | <outcome> | <category> | <cause or details>
-    explanation: <Claude's explanation, when Claude was involved>
 ```
+
+and every package Claude worked on gets the same fixed block under it, fields always in this order:
+
+```
+RESULT | some-pkg@1.2.0 | repaired | missing_dependency | the entry imports 'left-out', which is not installed
+    bundler     : 1 dependencies bundled, 2143 bytes
+    changes     : added pkg/node_modules/left-out (1 file(s) differ)
+    explanation : The bundler could not resolve 'left-out'. I installed it at the requested range and try-bundle.sh printed BUNDLE_OK.
+    note        : -
+    record      : claude_repair/some-pkg/repair.json
+```
+
+The explanation is asked to be brief; a longer one is cut to 400 characters in the log and in
+`report.csv` (which has an `explanation` column) and noted, and kept in full in `repair.json`.
 
 Settings: packages per run (`CLAUDE_MAX_PACKAGES`, 20), turns per package (40), spending cap per
 package in USD (blank = none), time limit (20 min), model (blank = Claude Code's default), and the
 Claude command. Claude Code must be installed and signed in (`npm i -g @anthropic-ai/claude-code`,
 then run `claude` once). Re-running the step skips packages already repaired. For the thesis, report
 the repaired packages separately: their *input* was modified, even though the bundler was not.
+
+## Tier 1: dependencies that don't exist on npm (`SKIP_MISSING_DEPS`, off)
+
+Some published packages list dependencies that were never published (e.g. `@finsweet/fs-components`
+lists 15 internal `core-…` packages; its own code does not use them). pnpm then cannot install the
+package at all — in Aletheia's setup too — so with the setting **off** (faithful) it is recorded as
+`download_failed`, with pnpm's own reason (`ERR_PNPM_FETCH_404 … not in the npm registry`).
+
+With it **on**, when pnpm stops because a dependency (or the requested version of it) does not exist,
+the download installs again without that dependency, using pnpm's own `overrides` (`"-"` = remove), as
+often as needed. The bundler is unchanged. The package's outcome is **`bundled_without_missing_deps`**,
+and the names left out are in its record, its `.meta.json` and the bundling summary
+(`missingDepsRemoved`) — report these packages separately, like the Claude repairs.
 
 ## Tier-1 streamed mode (`STREAM`, on for new projects)
 
@@ -138,9 +165,14 @@ Tier 1 runs one package at a time (`tier1/08-stream-packages.mjs`), calling the 
    or sent to Claude for them. Checked against real bundling on 26 packages of a real sample: it
    agreed on all 26 (10 skipped = exactly the 10 that fail; none that bundle was skipped);
 3. **bundle + SBOM** (step 03's script);
-4. **Claude repair**, only if bundling failed and `CLAUDE_REPAIR` is on (inside the stream, while the
-   download still exists — no separate 03b/04b step);
-5. **delete** the download, the unpacked package and pnpm's cache for it.
+4. **delete** the download, the unpacked package and pnpm's cache for it.
+
+A package the bundler fails on is **postponed** when `CLAUDE_REPAIR` is on: its download is parked in
+`02_downloaded_packages/_postponed/<package>/` (logged as `bundle_failed … postponed for Claude repair`)
+and the stream moves on. **After every package has been streamed**, Claude repairs the postponed ones
+one after another (at most `CLAUDE_MAX_PACKAGES` per run), and each parked download is deleted as
+soon as its repair is done. Packages over the limit, or left by a stopped run, stay parked and are
+repaired on the next run, without streaming anything again.
 
 **Kept:** bundles and source maps, SBOMs and module reports, extracted functions (step 06), Claude's
 reports, logs (`03_bundles_minified/stream/logs/<package>/`), one record per package
@@ -149,6 +181,13 @@ outcome, category, cause, dependencies bundled, bundle size, the entry the check
 `summary.json/.csv` and `manifest.jsonl` are rebuilt in step 03's exact format, so selection (04),
 collect (05) and extraction (06) run unchanged. Under **Also keep**, tick *Downloaded packages* to
 keep the `.tgz` files.
+
+**Disk errors while cleaning up never stop the run.** Each package is unpacked and bundled in a
+temporary folder with thousands of small files. If deleting it fails (e.g. `EIO` on a failing or
+network/USB drive), the delete is retried, then the folder is moved aside to `…_stream-undeleted`
+(deleted again at the end of the run), and the next package starts. **Temporary folder for
+bundling** (`WORK_DIR`) puts that folder on another disk, e.g. `/tmp` — use it when the output drive
+gives I/O errors; only the finished bundles, SBOMs and logs are then written to the output drive.
 
 Steps: expensive `01 → 02–03 stream → 04 → 05 → 06`; cheap `01 → 02 → 03–04 stream → 05 → 06`. A
 download already in `02_downloaded_packages/` (e.g. from a batch run) is used instead of downloading
@@ -199,6 +238,16 @@ node server.mjs            # open http://127.0.0.1:5273
 
 - **New project** — name it, set tier-1 parameters, run tier 1; then edit tier-2 parameters and run tier 2.
 - **Import tier-1 output** — point at an existing first-pipeline output folder to run **only tier 2** on it (tier 1 is marked *imported*).
+- **Open an existing project** — a project made earlier somewhere else (e.g. the `projects` folder of an
+  older copy of the pipeline). Give the project's folder, any folder inside it, or a whole `projects`
+  folder. Projects open **where they are** (nothing is copied; the link is kept in
+  `projects/opened-projects.json`) and continue from their first unfinished step; steps added by newer
+  versions are filled in as *not run*, and a step left running is marked interrupted. **Remove** takes an
+  opened project off the list and leaves its files. To use another projects folder as the main one,
+  start the server with `PROJECTS_DIR=/path/to/projects node server.mjs`.
+- **Damaged projects are listed, not hidden.** Every save keeps the previous good `project.json` as
+  `project.json.bak`; if `project.json` cannot be read (e.g. after a disk error) the backup is used, and if
+  neither can be read the project is shown with the reason so you can fix or delete it.
 - Each project is saved under a readable layout and is **resumable**:
 
 ```
@@ -211,6 +260,36 @@ projects/<name-slug>/
 ```
 
 Per tier you can **Run whole tier**, **Continue** (from the first unfinished step), run **a single step**, **Run up to step N** (from the first unfinished step up to and including N, then stop), or **Redo from step N** (re-run step N and everything after with the current parameters, even if already done — with an optional *rebuild* that first deletes the output those steps own, so new parameters actually take effect instead of being skipped over existing output). State (status / started / duration / exit code) and per-step logs are saved, written atomically, and survive a server restart (a step left mid-run is marked interrupted; Continue resumes).
+
+## Packing step outputs into `.tgz` (`PACK_OUTPUTS`, on, every tier)
+
+When a run ends (finished, failed or stopped), each step's **per-package files** are packed into one
+`.tgz` per kind, next to where they were; before the next run they are unpacked automatically, so
+every step always works on plain files. Paths inside an archive are unchanged (`tar -xzf bundles.tgz`
+in its folder gives the files back). By hand: `node lib-pack.mjs pack|unpack tier1|tier2|tier3 <output folder>`.
+
+| tier | archive | holds |
+|---|---|---|
+| 1 | `02_downloaded_packages/packages.tgz` | kept downloads (`.tgz` + `.meta.json`) |
+| 1 | `03_bundles_minified/bundles.tgz`, `sbom.tgz`, `modules.tgz` | bundles + source maps, SBOMs, module reports |
+| 1 | `03_bundles_minified/claude_repair/workspaces.tgz` | Claude's per-package folders |
+| 1 | `03_bundles_minified/stream/records.tgz` | one record per package |
+| 1 | `05_selected_bundles/bundles.tgz`, `sbom.tgz`, `modules.tgz` | the selected bundles |
+| 1 | `06_extracted_functions/functions.tgz` | `<bundle>.functions.json` |
+| 2 | `02_downloaded_packages/packages.tgz` | kept downloads |
+| 2 | `03_pseudo_bundles/bundles.tgz` | pseudo-bundles |
+| 2 | `04_extracted_functions/functions.tgz` | per-version function files |
+| 2 | `05_deduplicated_functions/packages.tgz`, `lineages.tgz`, `partials.tgz`, `versions.tgz`, `groups.tgz` | `packages/<package>.json`, `lineages/<package>.json` and the per-package records |
+| 3 | `02_detections/bundles.tgz` | `<bundle>.json`, the detections per bundle |
+
+A tier-3 run reads tier 1's `06_extracted_functions/functions.tgz`, `05_selected_bundles/bundles.tgz` and
+`sbom.tgz` and tier 2's `packages.tgz` and `lineages.tgz`: it unpacks just those before it starts and packs
+them again when it ends (if that tier packs its outputs). Tier 3 never runs at the same time as tier 1 or 2.
+
+**Never packed:** logs, and the small files that are not per package: lists, summaries, manifests,
+CSV/JSON reports, `stream/results.csv`, Claude's `report.csv`/`report.json`, and the merged
+`unique_functions.jsonl`. Switch `PACK_OUTPUTS` off to keep everything as plain files (the next run
+still unpacks what was packed before).
 
 ## Storage: downloads are always tarred
 
@@ -277,6 +356,71 @@ Output in `05_deduplicated_functions/`:
 one range means the function disappeared and came back. `trivial` (fewer than `TRIVIAL_NODES` AST
 nodes) marks bodies like `{}` you will usually skip when embedding. Nested functions are already
 stubbed by step 04, so each child is its own record (`parent_ids` links them).
+
+## Tier-2 step 06 (streamed): function lineages — history and markers (`LINK_EDITS`, on)
+
+Not part of Aletheia or Debun: an addition of this thesis, for version detection. Within each
+package, the edited versions of every function are linked into a **lineage**, its whole history is
+recorded, and checked code **markers** say which variant (and so which versions) a function is.
+
+**Files**
+- `lineages/<pkg>.json` (new, next to `packages/`): `{ package, versions, settings, source,
+  summary, function_index, lineages: [...] }`. `function_index` maps every function id to its
+  lineage; `source` is the package file it was made from.
+- `packages/<pkg>.json`: only a `lineage` tag is added to each function (the id of the lineage's
+  first variant). Nothing else changes.
+- `unique_functions.jsonl`: each record's `packages.<pkg>` entry gets `lineage`.
+
+**One lineage**
+```json
+{ "lineage": "3fac0422…", "born": "1.0.0", "last_seen": "3.3.2", "status": "alive",
+  "variants": [ { "id": "3fac0422…", "versions": [["1.0.0","1.0.0"]] }, … ],
+  "events": [
+    { "version": "1.0.0", "type": "born", "ids": ["3fac0422…"] },
+    { "version": "1.0.1", "type": "edited", "from": "…", "to": "…", "similarity": 0.955, "kind": "added",
+      "parts": {"added":1,"removed":0,"replaced":0}, "tokens_added": 4, "tokens_removed": 0,
+      "changes": [ { "type": "added", "after": "defaultProps : ! 0 ,", "context": "! 0 ," } ] }, … ],
+  "markers": [
+    { "code": "! 0 , defaultProps : ! 0 , displayName : !", "origin": {"change": "added", "version": "1.0.1"},
+      "variants": ["…"], "present": [["1.0.1","3.3.2"]], "absent": [["1.0.0","1.0.0"]], "in_rule": true, "elsewhere": 0 }, … ],
+  "identify": { "<variant id>": { "versions": [...], "contains": ["…"], "lacks": ["…"], "unique": true } } }
+```
+- **Events:** `born`, `edited`, `reverted` (back to an earlier variant), `removed` (absent from that
+  version on), `reappeared` (back after a gap). An edit's `kind` is `added`, `removed`, `replaced`,
+  `mixed` (a combination; `parts` counts each), `variables_only` or `too_large` (> 4000 tokens).
+- **Markers:** each change proposes small pieces of normalized code with a few tokens of context —
+  the new code, the old code, and for a pure addition/removal the old/new adjacency. Every candidate
+  is then tested on **every** variant, so `present`/`absent` are checked facts within the lineage's
+  versions. `elsewhere` (for markers used in a rule) counts other functions of the package that
+  also contain it.
+- **Identify:** for each variant, the fewest markers (`contains` / `lacks`, at most
+  **Markers per variant rule**, 3) that tell it from every sibling. When none can, `unique: false`,
+  with `also_matches`, `versions_if_matched` and the reason (e.g. the same code once the numbering
+  is ignored).
+- **Marker test** (also in `settings.marker_test`): tokens of `textNorm`, `v0, v1, …` masked to `v`,
+  space separated; a marker is present when `" " + marker + " "` occurs in `" " + tokens + " "`.
+
+**For matching:** `matchVariants(lineage, textNorm)` in `tier2/lib/lineage.mjs` tests every marker
+of a lineage on any function's normalized code and returns `exact` (variants agreeing with every
+marker), their `versions`, and `ranked` (every variant by the share of markers it agrees with — for
+code that is close but not identical).
+
+**Linking**, for each pair of consecutive versions: functions in both are anchors; a function only
+in the older and one only in the newer version are compared if they sit between the same or
+neighbouring anchors; score = 0.7 × token-bigram similarity of `textNorm` + 0.3 × overlap of
+strings, property names and globals; best pairs first, one-to-one, score ≥ **Minimum similarity**
+(0.5). Trivial functions take part only with **Link trivial functions too**.
+
+**On the 147-package reference set** (11,875 versions, 196,155 unique functions, about 5 minutes;
+the largest package, `@clerk/clerk-js`, 60 s): 99,299 lineages, 31,036 with edits; 95,924 edits and
+9,526 reverts (mixed 33.1%, replaced 32.5%, added 19.7%, removed 8.2%, variables only 4.0%, too
+large 2.4%); 701,014 markers; **92.2% of the 127,892 variants in edited lineages are identifiable by
+markers**. Checked on all of them: the matcher finds every variant from its own code, and picks only
+that variant whenever its rule says unique. Lineage files: 554 MB (package files: 1.7 GB). Links
+are similarity-based and not yet checked against an answer key.
+
+Resumable: a package already done with the same settings from the same package file is skipped.
+By hand: `node tier2/08_link-edits.mjs <05_deduplicated_functions> [--min-similarity 0.5] [--include-trivial] [--max-rule 3]`.
 
 ## Tier-2 streamed mode (`STREAM`) and `KEEP_ARTIFACTS`
 
@@ -415,6 +559,152 @@ The step track is mode-aware: batch shows `01 … 05`, streamed shows
 A project saved before streamed mode existed has no `STREAM` key and keeps running in batch mode, so
 it resumes exactly as before. (The control panel itself is described near the top of this file.)
 
+## Tier 3 · Detection: which packages and versions are in a bundle
+
+Tier 3 takes tier 1's bundles (the test bed) and tier 2's reference dataset, and decides for every
+bundle **which packages are inside it and which version of each** — a single version where the
+code tells them apart, otherwise a range of versions that are all possible. Tier 1's SBOMs are the
+ground truth it is measured against. Nothing in tier 3 is part of Aletheia or Debun; it only reads
+their outputs.
+
+| step | script | reads | writes |
+|---|---|---|---|
+| 01 · Build the search index | `01_build-index.mjs` | tier 2 `05_deduplicated_functions/packages/`, `lineages/` | `01_index/` (`meta.json`, `records.json`, `sigs.bin`, `lineages/`) |
+| 02 · Detect packages and versions | `02_detect.mjs` | the index; tier 1 `06_extracted_functions/`, and for the evaluation `05_selected_bundles/sbom/` and `bundles/` (source maps) | `02_detections/bundles/<bundle>.json` |
+| 03 · Report | `03_report.mjs` | step 02's files | `03_report/report.md`, `summary.json`, `detections.csv`, `evaluation.csv` |
+
+Step 01 keeps its index while tier 2's files are unchanged (names, sizes, times); step 02 skips a
+bundle already done with the same settings and index, so changing a setting and choosing *Redo from
+step 02* redoes only what changed. The *Report* tab shows `report.md`.
+
+### How a bundle is read
+
+1. **Match** every non-trivial bundle function (the same `trivial_nodes` rule as tier 2) against the
+   reference: **exactly**, by tier 2's own fingerprint (signature + normalized code), and
+   **approximately**, because webpack minifies with Terser and the reference was minified by swc, so
+   the same source often comes out slightly different. Approximate matching uses a MinHash sketch
+   (64 values, one-permutation hashing with densification) of the code's 3-token shingles with local
+   names masked, and LSH (21 bands × 3 rows; a candidate must share 2 bands) to avoid comparing all
+   pairs; a match needs an estimated similarity ≥ `MIN_SIM` (0.5).
+2. **Weigh** each match: similarity × specificity × size. Specificity is 1 − log k / log P (a function
+   found in k of P indexed packages proves less the more packages have it); a function found in more
+   than `MAX_SHARED` (30) packages — Babel/TypeScript helpers, the webpack runtime inside prebuilt
+   builds — proves nothing. Size: tiny functions (< 40 tokens) count less.
+3. **Choose packages, explaining away.** Coverage of a package = the share of its own non-trivial
+   functions (at its best version) that the bundle matches. A package is accepted with enough
+   evidence (`MIN_EVIDENCE` 1.5 from ≥ 2 functions, coverage ≥ `MIN_COVERAGE` 0.05), or — small
+   packages that can't reach that evidence — with coverage ≥ `SMALL_COVERAGE` (0.5). The next package
+   is always the best-covered one: a real library covers a large share of itself, a prebuilt
+   mega-bundle that holds copies of many libraries covers a tiny share of itself, so the libraries
+   are chosen first and take their functions. A chosen package *explains* the functions it matches
+   about as well as anyone; they no longer count for later packages — except that a package whose
+   code an earlier one holds a copy of (a UMD build with its dependencies inside) is still found
+   when the bundle covers ≥ `SHARE_COVERAGE` (0.5) of it.
+4. **Versions, by intersection.** The functions that are the package's own (it matches them about
+   as well as any package found in the bundle, and no other found package matches them as well —
+   quill 1.x's prebuilt build held eventemitter3, so eventemitter3's functions in a quill 2 bundle
+   must not count for quill) are each consistent with a set of versions: the versions of the
+   record a function matches exactly; for an approximate match, the records within 0.05 of its best
+   similarity (64-value sketches estimate similarity only to a few hundredths); in
+   **approx+lineage** mode, the lineage variant whose markers the bundle's code has. The package's
+   versions are the **intersection** of those sets: one version is the exact version, several are
+   the range (the newest is given as the guess). When the functions contradict each other (empty
+   intersection), the range is the versions consistent with the most functions and the functions
+   that disagree are listed (`conflictFunctions`); `VERSION_FALLBACK=union` gives every function's
+   versions instead, and that union is always written as `unionRange`. `VERSION_METHOD=vote` is the
+   older alternative: each version scores the evidence of the functions consistent with it.
+
+Three **modes** are computed from the same matches so they can be compared: `exact` (fingerprints
+only), `approx`, `approx+lineage`.
+
+### How it is measured
+
+Package level against the SBOM (root + components): TP, FP, FN, precision, recall, F1; packages that
+are not in the index are counted apart. Version level for every TP: exact version, true version in
+the range, range size — split into the bundle's own package and its dependencies.
+
+**Function level, from the source maps.** webpack keeps `node_modules/.pnpm/<name>@<version>/…` in
+every source path, so each bundle function's true package is known. That gives the attribution
+accuracy (of the functions a detected package explains, the share that really come from it), and a
+reason for every error:
+
+| missed package (FN) | |
+|---|---|
+| no functions in the bundle | its modules hold no non-trivial function |
+| reference lacks the code | none of its bundled functions matches its reference |
+| explained by *X* | most of its matchable functions went to package *X* |
+| too little evidence | matchable, but below the thresholds |
+
+| wrongly found (FP) | |
+|---|---|
+| vendored copy inside *Q* | its functions come from a file of *Q* named after it (element-ui ships `lib/utils/lodash.js`): the code is there, the SBOM can't know |
+| embedded in a file of *Q* | ≥ 80 % of them come from one file of *Q*, a prebuilt build holding a copy (`algoliasearch.umd.js` holds the `@algolia/*` clients, `quill/dist/quill.js` holds parchment) |
+| holds a copy of *Q* | the other way round: the detected package covers < 25 % of itself; its reference is a prebuilt build that holds *Q* (mealz-components holds lit) |
+| same code as *Q* | otherwise from *Q* (lodash found for lodash-es) |
+| shared or generic code | no package dominates |
+
+### Results on 44 real bundles
+
+44 bundles of 24 popular packages (the latest version of each, and an older one of 20), built by
+tier 1. Reference: a real tier-2 dataset of 147 packages, every version (191,627 non-trivial
+functions) — 99 of the bundles' 103 packages, plus 48 others that act as distractors (prebuilt
+bundles such as `@clerk/clerk-js` that hold copies of many libraries). Of the 26,420 non-trivial
+bundle functions, 50 % match exactly, 35 % only approximately, 15 % not at all.
+
+| mode | precision | recall | F1 | version exact | version in range | median range |
+|---|---|---|---|---|---|---|
+| exact | 0.856 | 0.483 | 0.618 | 0.804 | 0.918 | 2 |
+| approx | 0.844 | 0.646 | 0.732 | 0.832 | 0.916 | 2 |
+| approx+lineage | 0.844 | 0.646 | 0.732 | **0.840** | **0.924** | **1** |
+
+When all of a package's functions agree (72 of the 131 correctly found packages, approx+lineage),
+the true version is inside their intersection 70 times, and the 36 times the intersection is a
+single version it is the right one every time. When they contradict (59), it is typically because
+of 3 functions (median): approximate matches across two minifiers (webpack's Terser, tier 2's swc),
+lineage markers that describe swc's formatting, another package's code, or tier 2's reference
+lacking the newer code.
+
+Counting vendored and embedded copies as right (their code is in the bundle; the SBOM can't know),
+precision is 0.913; leaving out packages whose bundled code cannot be matched at all, recall is
+0.718. Function attribution accuracy is 0.86 (approx). Step 02 takes 30 s for the 44 bundles (the
+index loads in 1.5 s); step 01 builds the index in 31 s. The tuning history (F1 0.431 → 0.732), an
+ablation of every rule and the per-bundle results are in
+[`tier3/RESULTS-testbed.md`](tier3/RESULTS-testbed.md). The thresholds were tuned on these same
+bundles; the ablation shows each rule's effect.
+
+**What limits it, from the error reasons:** tier 2's reference lacks code for packages whose
+`exports` lead to an ES-module build, because Aletheia drops `export` declarations: the reference of
+`@tanstack/query-core` has 398 non-trivial functions at 4.36.1 and 95 at 5.0.0, `@opentelemetry/core`
+164 at 2.12.1 and 44 at 3.1.1, stylis 4 has 6 for about 50 in its bundles — so stylis is missed
+and the newest versions of the others are recognised as an older one. Then packages whose reference is a different build than
+the one webpack picks (react-dom's development + production files), and prebuilt bundles of other
+packages (`mealz-components` holds lit) that compete for the same code.
+
+### Settings (*Settings* on the Tier 3 tab)
+
+`MODES`, `EVALUATE` (off = detections only, for bundles without an SBOM), `PACK_OUTPUTS`; matching:
+`MIN_SIM`, `MIN_BANDS`, `MAX_SHARED`; packages: `MIN_EVIDENCE`, `MIN_FUNCTIONS`, `MIN_COVERAGE`,
+`SMALL_COVERAGE`, `SHARE_COVERAGE`; versions: `VERSION_METHOD` (`intersect` or `vote`),
+`VERSION_FALLBACK` (`most` or `union`), and for voting `VERSION_TOLERANCE`, `VERSION_PICK`
+(`latest` or `parsimony`).
+
+### By hand
+
+```bash
+node tier3/01_build-index.mjs <tier2 out>/05_deduplicated_functions out3/01_index
+node tier3/02_detect.mjs --index out3/01_index --functions <tier1 out>/06_extracted_functions \
+     --bundles <tier1 out>/05_selected_bundles/bundles --sbom <tier1 out>/05_selected_bundles/sbom \
+     --out out3/02_detections [--modes approx+lineage] [--opts '{"minSim":0.6}'] [--no-evaluate]
+node tier3/03_report.mjs out3/02_detections out3/03_report
+# compare option sets on the same matches (tuning, ablation):
+node tier3/tools/sweep.mjs --index out3/01_index --functions … --bundles … --sbom … \
+     --variants '[{}, {"minSim":0.6}, {"shareCoverage":1e9}]'
+```
+
+Each `02_detections/bundles/<bundle>.json` holds, per mode, every detected package with its version,
+range, evidence, coverage, the bundle functions it explains (`explains`, indices into the tier-1
+functions file) and, with an SBOM, the evaluation rows with their reasons.
+
 ## Tests
 
 A granular regression suite (Node's built-in runner, no extra dependencies) covers each step of both tiers:
@@ -428,26 +718,42 @@ What it checks, per step:
 - **Tier 1** — `lib-pipeline` buildCommand for every step in both modes + `dirs`/`stepDirs`; the Claude repair step (placement after bundling in both modes, command and bundler env, a real repair with a stand-in `claude` command that the unchanged bundler then bundles, an attempt to fake success by editing the check script being rejected, a missing `claude` command failing clearly); protected bundle folders (a clean redo archives them, never deletes them); `MINIFY=0` reaching the bundler; step 02c selection (flat, bucket distribution, basis landed-vs-declared, seed reproducibility); step 04 sample selection; step 05 bundled-deps CSV; step 03 webpack bundle + SBOM (runs when `webpack` is installed); step 06 function extraction + `--min-loc` (runs when `meriyah`/`escodegen` are installed).
 - **Tier 2** — `lib-pipeline-2` buildCommand (incl. `preview`, `--selection` passthrough and step-05 flags) + `stepDirs`; the removal of version sampling (no `sample` option or sampling flags left) and the version helpers; step 01 base-set + inclusion selection (offline via `--versions exact`, incl. the "excluded-but-kept-as-dependency" rule); the file-selector root-manifest fix (nested-stub regression) and resilience; the §3.3 pseudo-bundler transform (Fix B keeps exports, `wrapJson`, `module([…])` wrapper); step 03 end-to-end (runs when the bundler deps are installed); step 04 function extraction; step 05 dedup (identity rules, version intervals/gaps, round-trip, near-duplicates, fallback keys — no extra deps), the `string` vs `hash` comparison (`functionKey` shape, identical output in both modes and both `DEDUP_MODE`s, id-collision refusal within a package and across partials) and its `collect`/`mergeStates`/`finalize` split (`dedup() == finalize(collect())` == merged per-package partials, byte for byte).
 - **Tier 2 streamed mode** (`tier2-stream.test.mjs`) — batch vs streamed **byte-identical** output (default settings, and with `--mode exact --strict-type --near`); a dependency in two groups processed once and marked `reused`; `KEEP_ARTIFACTS=""` leaving no `.tgz`/bundle/`functions.json` and `"03"` leaving only bundles; re-finalizing kept partials with a different `TRIVIAL_NODES`; resume after a real `SIGKILL` mid-run (finished packages skipped, leftover work dir discarded, output equal to an uninterrupted run, then "already complete"); `MINIFY=0` really producing un-minified bundles; group order and `INCLUDE_PACKAGE=0`; a failed download leaving no partial. These run the real step scripts as child processes but **never touch the network**: step 02 is fed a local tarball cache (`--tgz-cache`), whose `.tgz` files it then skips exactly as it skips an already-downloaded package.
+- **Tier 3** (`tier3-lib.test.mjs`, `tier3-real.test.mjs`) — sketches (renumbered locals give similarity 1, a one-token edit stays above 0.6, unrelated code below 0.2) and LSH with 1 and 2 bands; every decision rule on a hand-made index: coverage-first explaining away (a mega-bundle holding a library's copy does not take its functions; evidence-first ordering would), shared code of a UMD build, the small-package path, `maxShared`, `minSim`, newest-among-equals vs parsimony, versions by intersection (a range, a single pinned version, contradicting functions with the most-agreed versions or the union, the conflicting functions listed), only the package's own code deciding its version, and the lineage markers deciding the variant of an approximate match; source-map decoding (VLQ, negative deltas, pnpm paths with versions and peers) and attribution; the SBOM truth, every evaluation status, the metrics and every error reason. **On real examples** (`test/fixtures/tier3`, 224 KB gzipped: tier 2's reference for copy-to-clipboard, toggle-selection, throttle-debounce and eventemitter3, and tier 1's real webpack bundles of them with source maps and SBOMs, plus a made-up carrier package holding a copy of all four): the three steps as child processes — index kept while up to date and rebuilt when tier 2's files change; copy-to-clipboard@3.3.3 found with toggle-selection@1.0.6, both versions in range; throttle-debounce's exact versions; the carrier never detected; the source map attributing the real bundle's functions (4 + 4 + 10 webpack runtime); resume and redo on new settings; `--no-evaluate`; the report and CSVs; the project wiring and the whole tier through its `all` command; packing tier 3's files and only the borrowed tier-1 archives; the sweep tool. The server test checks that an old project gets tier 3 with its defaults, the report endpoint, and a clear error when tier 3 runs without tier 2's output.
 
 Tests that need a heavy dependency (`webpack`, `@swc/core`, `meriyah`, …) **skip cleanly** if it isn't installed, so `npm test` works before `npm install` and runs in full after it. The network-only steps (jsDelivr crawl, npm download) are intentionally not in the automated suite; everything they feed is exercised with local fixtures.
 
 ## Requirements
 
-- Node 18+. Deps (installed by each tier's **Setup deps** button, or `npm install` at the root):
-  tier 1 uses `webpack`, `meriyah`, `escodegen`, `source-map-js`; tier 2 uses `@swc/core`, `acorn*`, `astring`, `meriyah`, `escodegen`.
+- Node 18+. **Run `npm ci` once in this folder** (or *More → Install the pipeline's tools*): it installs every
+  tool at the exact versions in `package-lock.json` (webpack 5.112.2, meriyah 7.0.0, escodegen 2.1.0, @swc/core …),
+  which is what faithfulness was checked with. The zip has no `node_modules`, so do this after unzipping into a
+  new folder. The streamed step stops with a clear message if a tool is missing, prints the webpack version it
+  uses, and warns if it is not the pinned one (e.g. a leftover `tier1/node_modules` — delete it).
+- Packages that fail for a reason of the machine (download failed, disk error, missing tool) are **tried again on
+  Continue**; only real package outcomes count as done.
+- **Bundler self-test:** before any package, the streamed step bundles a tiny test package with the real,
+  unchanged bundler. If that fails (e.g. a damaged `node_modules`: `TypeError: … is not a function` inside
+  webpack's minifier), the run stops with the fix (`npm ci`) instead of failing — or sending to Claude — every
+  package. Each record notes that the self-test passed (`toolsOk`); a `bundler_crash` recorded without it is
+  tried again.
 - Network: jsDelivr + npm registry (tier 1 steps 01–02); npm registry (tier 2 steps 01–02).
 - Binds to `127.0.0.1` only (it runs shell commands).
 
 ## Layout
 
 ```
-server.mjs            unified web server (projects, two tiers, atomic state)
+server.mjs            unified web server (projects, three tiers, atomic state)
 public/index.html     the UI
-lib-project.mjs       combines the two tier libs, project paths, auto-wiring
+lib-project.mjs       combines the three tier libs, project paths, auto-wiring
+lib-pack.mjs          packs each step's per-package files into .tgz at the end of a run, unpacks before the next
 tier1/                first pipeline: 01-…06 scripts, 07-claude-repair-bundles.mjs (optional),
                       run-pipeline.sh, lib-pipeline.mjs
 tier2/                reference pipeline: 01_…05_ scripts (batch), 06_stream-packages.mjs +
-                      07_merge-partials.mjs (streamed), run-pipeline-2.sh, lib-pipeline-2.mjs, lib/
+                      07_merge-partials.mjs + 08_link-edits.mjs (streamed; lineages: lib/lineage.mjs),
+                      run-pipeline-2.sh, lib-pipeline-2.mjs, lib/
+tier3/                detection: 01_build-index.mjs, 02_detect.mjs, 03_report.mjs, lib-pipeline-3.mjs,
+                      lib/ (sketch, index, detect, sourcemap, evaluate), tools/sweep.mjs,
+                      RESULTS-testbed.md (the evaluation on 44 real bundles and how the algorithm got there)
 ```
 
-Each tier's scripts and `run-pipeline*.sh` still work on their own from inside `tier1/` and `tier2/`.
+Each tier's scripts and `run-pipeline*.sh` still work on their own from inside `tier1/` and `tier2/`, and tier 3's from anywhere.

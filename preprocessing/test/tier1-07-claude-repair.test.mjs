@@ -63,7 +63,9 @@ test("a package the bundler failed on is repaired, re-bundled by the unchanged b
     assert.equal(rec.claude.report_valid, true); assert.match(rec.explanation, /re-ran try-bundle\.sh/);
     assert.equal(rec.original_category, "missing_dependency");
     assert.match(r.stdout, /^RESULT \| broken-pkg@1\.0\.0 \| repaired \| missing_dependency \| left-out@\^2\.0\.0 was required/m);
-    assert.match(r.stdout, /^    explanation: I read the bundler log/m);
+    assert.match(r.stdout, /^    explanation : I read the bundler log/m);
+    // the fixed block: same fields, same order, for every package
+    assert.match(r.stdout, /^RESULT \| .*\n    bundler     : .*\n    changes     : .*\n    explanation : .*\n    note        : .*\n    record      : claude_repair\/.*\/repair\.json$/m);
     assert.match(runNode(REPAIR, [join(t.dir, "packages"), out, "--claude-bin", join(t.dir, "claude")]).stdout, /Nothing to repair/, "re-run skips it");
   } finally { t.cleanup(); }
 });
@@ -99,7 +101,7 @@ test("a missing or malformed REPAIR.json is recorded as such, and a false claim 
     assert.equal(rec.category, "missing_dependency", "falls back to the category of the original error");
     assert.match(r.stdout, /^RESULT \| broken-pkg@1\.0\.0 \| not_repaired \| missing_dependency \| no valid report from Claude/m);
     const csv = readFileSync(join(out, "claude_repair", "report.csv"), "utf8").trim().split("\n");
-    assert.equal(csv[0], "folder,name,version,outcome,category,cause,original_category,original_error,files_changed,report_valid,turns,cost_usd,note");
+    assert.equal(csv[0], "folder,name,version,outcome,category,cause,original_category,original_error,files_changed,report_valid,turns,cost_usd,note,explanation");
     assert.equal(csv.filter((l) => l.startsWith("broken-pkg,broken-pkg,")).length, 2, "one row per attempt");
   } finally { t.cleanup(); }
 });
@@ -107,7 +109,7 @@ test("a missing or malformed REPAIR.json is recorded as such, and a false claim 
 test("Claude is asked for the standardized REPAIR.json with the shared category list", () => {
   const src = readFileSync(REPAIR, "utf8");
   assert.match(src, /write \.\/REPAIR\.json \(required, exactly this shape\)/);
-  assert.match(src, /"explanation": "your own explanation in your own words/);
+  assert.match(src, /"explanation": "brief, in your own words: at most 3 sentences \(400 characters\)/);
   assert.match(src, /CATEGORY_NAMES\.map/, "the category list comes from the shared lib/failures.mjs");
 });
 

@@ -426,6 +426,7 @@ async function process_(folder) {
       sourceMapBytes: mapBytes,
       outFile: join(bundlesDir, filename),
       sourceMapFile: mapBytes ? join(bundlesDir, `${filename}.map`) : undefined,
+      ...(meta.missingDepsRemoved?.length ? { missingDepsRemoved: meta.missingDepsRemoved } : {}), // label only (SKIP_MISSING_DEPS)
     };
   }
 
@@ -452,6 +453,7 @@ async function process_(folder) {
       sourceMapBytes: mapBytes,
       outFile: join(bundlesDir, filename),
       sourceMapFile: mapBytes ? join(bundlesDir, `${filename}.map`) : undefined,
+      ...(meta.missingDepsRemoved?.length ? { missingDepsRemoved: meta.missingDepsRemoved } : {}), // label only (SKIP_MISSING_DEPS)
     };
   } finally {
     mat.cleanup();

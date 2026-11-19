@@ -2,7 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { basename } from "node:path";
 import { tmp } from "./helpers.mjs";
-import { TIERS, stepDirsForTier, buildTierCommand, tierOutput, tierMode, activeStepIds, allStepIds } from "../lib-project.mjs";
+// lib-project reads PROJECTS_DIR when it is loaded: a temporary folder, so building commands
+// (which creates the project's output folders) never writes into the real projects/ folder
+const PROJECTS = tmp("projlib");
+process.env.PROJECTS_DIR = PROJECTS.dir;
+process.on("exit", () => PROJECTS.cleanup());
+const { TIERS, stepDirsForTier, buildTierCommand, tierOutput, tierMode, activeStepIds, allStepIds, cleanStepOutputs, tierView, protectedDirsForTier } = await import("../lib-project.mjs");
 
 test("TIERS expose both pipelines with numbered step ids", () => {
   assert.deepEqual(TIERS.tier1.stepIds, ["01", "02", "03", "04", "05", "06"]);
@@ -27,24 +32,25 @@ test("buildTierCommand auto-wires tier2 INPUT_DIR to tier1 output", () => {
   assert.ok(built.args.map((a) => basename(String(a))).includes("01_build-list.mjs"));
 });
 
-test("tier2 steps are mode-aware: batch keeps 01-05, streamed is 01/06/07", () => {
+test("tier2 steps are mode-aware: batch keeps 01-05, streamed is 01/06/07/08", () => {
   const batch = { slug: "p", tier1: { params: {} }, tier2: { params: { STREAM: "0" } } };
   const streamed = { slug: "p", tier1: { params: {} }, tier2: { params: { STREAM: "1" } } };
   assert.equal(tierMode(batch, "tier2"), "batch");
   assert.equal(tierMode(streamed, "tier2"), "streamed");
   assert.deepEqual(activeStepIds(batch, "tier2"), ["01", "02", "03", "04", "05"]);
-  assert.deepEqual(activeStepIds(streamed, "tier2"), ["01", "06", "07"]);
+  assert.deepEqual(activeStepIds(streamed, "tier2"), ["01", "06", "07", "08"]);
+  assert.deepEqual(activeStepIds({ ...streamed, tier2: { ...streamed.tier2, params: { ...streamed.tier2.params, LINK_EDITS: "0" } } }, "tier2"), ["01", "06", "07"], "lineage step switched off");
   // a project saved before streamed mode existed has no STREAM key and stays batch
   assert.deepEqual(activeStepIds({ slug: "p", tier1: { params: {} }, tier2: { params: {} } }, "tier2"), ["01", "02", "03", "04", "05"]);
   // project state is kept for every id, so switching mode never loses a row
-  assert.deepEqual(allStepIds("tier2"), ["01", "02", "03", "04", "05", "06", "07"]);
+  assert.deepEqual(allStepIds("tier2"), ["01", "02", "03", "04", "05", "06", "07", "08"]);
   assert.deepEqual(activeStepIds({ slug: "p", tier1: { params: { MODE: "cheap" } }, tier2: { params: {} } }, "tier1"), TIERS.tier1.stepIds);
 });
 
 test("stepDirsForTier follows tier2's mode", () => {
   const streamed = { slug: "p", tier1: { params: {} }, tier2: { params: { STREAM: "1" } } };
   const sd = stepDirsForTier(streamed, "tier2");
-  assert.deepEqual(Object.keys(sd), ["01", "06", "07"]);
+  assert.deepEqual(Object.keys(sd), ["01", "06", "07", "08"]);
   assert.ok(sd["06"].some((p) => String(p).endsWith("_work")));
 });
 
@@ -57,7 +63,6 @@ test("buildTierCommand builds the streamed steps for tier2", () => {
   assert.ok(b7.args.map((a) => basename(String(a))).includes("07_merge-partials.mjs"));
 });
 
-import { cleanStepOutputs, tierView, protectedDirsForTier } from "../lib-project.mjs";
 import { mkdirSync, writeFileSync, existsSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import * as T1lib from "../tier1/lib-pipeline.mjs";
@@ -95,6 +100,7 @@ test("tierView lists the steps a project runs, with the numbers users know", () 
   assert.equal(v1.steps.find((s) => s.id === "07").status, "pending");
   const v2 = tierView(p, "tier2");
   assert.equal(v2.mode, "streamed");
-  assert.deepEqual(v2.steps.map((s) => s.num), ["01", "02–05", "05"]);
+  assert.deepEqual(v2.steps.map((s) => s.num), ["01", "02–05", "05", "06"]);
+  assert.match(v2.steps[3].label, /^Function lineages/);
   assert.match(v2.steps[1].label, /^Stream packages/);
 });
