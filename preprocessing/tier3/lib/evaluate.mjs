@@ -134,11 +134,11 @@ export function analyzeFunctions(rows, detections, attribution, fns, names, mode
 // Totals of the function-level analysis over many bundles.
 export function summarizeFunctions(allRows, counts) {
   // reasons without the package they name: "explained by react" → "explained by another package"
-  const tally = (status) => { const m = {}; for (const r of allRows) if (r.status === status && r.reason) { const k = r.reason.replace(/ (inside|as|by|of) .*/, " $1 another package"); m[k] = (m[k] ?? 0) + 1; } return m; };
+  const tally = (status) => { const m = {}; for (const r of allRows) if (r.status === status && r.reason) { const k = r.reason.replace(/ (inside|as|by|of|into) .*/, " $1 another package"); m[k] = (m[k] ?? 0) + 1; } return m; };
   const c = counts.reduce((a, b) => ({ attributed: a.attributed + b.attributed, explained: a.explained + b.explained, correct: a.correct + b.correct }), { attributed: 0, explained: 0, correct: 0 });
   const TP = allRows.filter((r) => r.status === "TP").length, FP = allRows.filter((r) => r.status === "FP").length;
   const FN = allRows.filter((r) => r.status === "FN").length;
-  const vendored = allRows.filter((r) => r.status === "FP" && /^(vendored|embedded)/.test(r.reason ?? "")).length;
+  const vendored = allRows.filter((r) => r.status === "FP" && /^(vendored|embedded|compiled into)/.test(r.reason ?? "")).length;
   const undetectable = allRows.filter((r) => r.status === "FN" && /^(no functions|reference lacks)/.test(r.reason ?? "")).length;
   const ratio = (a, b) => (b ? Math.round((a / b) * 1000) / 1000 : null);
   return {

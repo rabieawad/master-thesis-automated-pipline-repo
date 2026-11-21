@@ -45,14 +45,17 @@ test("flat version ranges", () => {
 // ---------------------------------------------------------------- decisions, on a hand-made index
 // pkgs: [{ name, versions, fns: [[versionIndex…], …], lineage?: [...] }]; every function is one record
 function mockIndex(pkgs, lineages = {}) {
-  const packages = [], rec = { pkg: [], versions: [], lineage: [] };
+  const packages = [], rec = { pkg: [], versions: [], lineage: [], id: [], ntok: [] }, pkgsOfId = new Map();
   let n = 0;
   pkgs.forEach((p, pi) => {
     const start = n, nonTrivial = p.versions.map(() => 0);
-    p.fns.forEach((vs, j) => { for (const v of vs) nonTrivial[v]++; rec.pkg.push(pi); rec.versions.push(toFlatRanges(vs)); rec.lineage.push(p.lineage?.[j] ?? null); n++; });
+    p.fns.forEach((vs, j) => {
+      for (const v of vs) nonTrivial[v]++; rec.pkg.push(pi); rec.versions.push(toFlatRanges(vs)); rec.lineage.push(p.lineage?.[j] ?? null);
+      const id = `${pi}:${j}`; rec.id.push(id); rec.ntok.push(p.ntok ?? 60); pkgsOfId.set(id, 1); n++;
+    });
     packages.push({ name: p.name, versions: p.versions, nonTrivial, start, end: n, hasLineages: !!lineages[pi] });
   });
-  return { meta: { packages }, rec, P: pkgs.length, N: n, lineagesOf: (pi) => lineages[pi] ?? {} };
+  return { meta: { packages }, rec, pkgsOfId, P: pkgs.length, N: n, lineagesOf: (pi) => lineages[pi] ?? {} };
 }
 const recOf = (ix, name, j) => ix.meta.packages.find((p) => p.name === name).start + j;
 // a matched bundle function: matches = [[record, similarity, exact]]
@@ -121,6 +124,93 @@ test("a small package is found from high coverage even below the minimum evidenc
   assert.equal(d?.name, "tiny");
   assert.ok(d.evidence < DEFAULTS.minEvidence);
   assert.deepEqual(infer(ix, fns, "exact", { smallCoverage: 2 }), [], "small path off");
+});
+
+test("independent: a function found in several packages counts for each, every package is judged on its own", () => {
+  const ix = mockIndex([
+    { name: "lib", versions: ["1.0.0"], fns: Array.from({ length: 10 }, () => [0]) },
+    { name: "carrier", versions: ["1.0.0"], fns: Array.from({ length: 100 }, () => [0]) },
+    ...fillers(50),
+  ]);
+  const fns = [...Array.from({ length: 10 }, (_, j) => fn(ix, j, [[recOf(ix, "lib", j), 1, true], [recOf(ix, "carrier", j), 1, true]])),
+    ...[10, 11, 12].map((j) => fn(ix, j, [[recOf(ix, "carrier", j), 1, true]]))];
+  assert.deepEqual(names(infer(ix, fns, "exact")), ["lib"], "greedy: lib takes its functions, the carrier is left with too little");
+  const det = infer(ix, fns, "exact", { algorithm: "independent" });
+  assert.deepEqual(names(det), ["carrier", "lib"], "independent: both keep the shared functions (the carrier is the known cost)");
+  assert.equal(det.find((d) => d.name === "lib").sharedFunctions, 10);
+  // the package's own reference matches its code worse than a copy does: counts only with a larger nearDelta
+  const weak = Array.from({ length: 10 }, (_, j) => fn(ix, j, [[recOf(ix, "lib", j), 0.7, false], [recOf(ix, "carrier", j), 0.95, false]]));
+  assert.ok(!names(infer(ix, weak, "approx", { algorithm: "independent" })).includes("lib"));
+  assert.ok(names(infer(ix, weak, "approx", { algorithm: "independent", nearDelta: 0.3 })).includes("lib"));
+});
+
+test("size-aware: a tiny package needs a share of the evidence it could ever give, a large one the full minimum", () => {
+  const ix = mockIndex([
+    { name: "tiny", versions: ["1.0.0"], fns: [[0], [0]], ntok: 15 },  // potential 2 × 15/40 = 0.75
+    { name: "big", versions: ["1.0.0"], fns: Array.from({ length: 200 }, () => [0]) },
+    ...fillers(50),
+  ]);
+  const one = [fn(ix, 0, [[recOf(ix, "tiny", 0), 1, true]], { ntok: 15 })]; // evidence 0.375, half the package
+  assert.deepEqual(infer(ix, one, "exact"), [], "fixed thresholds: too little");
+  assert.deepEqual(names(infer(ix, one, "exact", { sizeAware: true })), ["tiny"], "size-aware: half of what it could give, from half its functions");
+  const bigFns = [0, 1, 2].map((j) => fn(ix, j, [[recOf(ix, "big", j), 1, true]], { ntok: 15 }));     // evidence 1.125 < 1.5
+  assert.deepEqual(infer(ix, bigFns, "exact", { sizeAware: true, smallCoverage: 2 }), [], "a large package still needs minEvidence");
+});
+
+test("stub versions: a placeholder release far smaller than the package is not used for coverage", () => {
+  // v0.0.1 is a 4-function stub (webpack runtime), the real versions have 100 functions
+  const ix = mockIndex([{ name: "ui", versions: ["0.0.1", "1.0.0", "1.1.0", "1.2.0"],
+    fns: [...Array.from({ length: 4 }, () => [0]), ...Array.from({ length: 100 }, () => [1, 2, 3])] }, ...fillers(50)]);
+  const fns = [0, 1, 2].map((j) => fn(ix, j, [[recOf(ix, "ui", j), 1, true]], { ntok: 30 }));
+  assert.deepEqual(names(infer(ix, fns, "exact")), ["ui"], "3 of the stub's 4 functions: 'covered'");
+  assert.deepEqual(infer(ix, fns, "exact", { minVersionShare: 0.1 }), [], "the stub is ignored");
+  const real = Array.from({ length: 20 }, (_, j) => fn(ix, j, [[recOf(ix, "ui", 4 + j), 1, true]]));
+  assert.deepEqual(names(infer(ix, real, "exact", { minVersionShare: 0.1 })), ["ui"], "the real package is still found");
+});
+
+test("dependency confirmation: a dependency of a found package (at its version) needs one exact match; not when the parent's own build holds it", () => {
+  const ix = mockIndex([
+    { name: "app", versions: ["1.0.0", "2.0.0"], fns: Array.from({ length: 10 }, () => [0, 1]) },
+    { name: "tiny", versions: ["1.0.0"], fns: [[0], [0], [0], [0]] },
+    { name: "other", versions: ["1.0.0"], fns: [[0], [0], [0], [0]] },
+    ...fillers(50),
+  ]);
+  ix.deps = new Map([[0, new Map([["1.0.0", { dependencies: [1], ranges: new Map([[1, "^1.0.0"]]) }], ["2.0.0", { dependencies: [2], ranges: new Map([[2, "^1.0.0"]]) }]])]]);
+  const appFns = Array.from({ length: 10 }, (_, j) => fn(ix, j, [[recOf(ix, "app", j), 1, true]]));
+  const one = (name) => fn(ix, 20, [[recOf(ix, name, 0), 1, true]], { ntok: 10 });
+  // app's versions can't be told apart → range 1.0.0–2.0.0, newest guess 2.0.0, which declares "other"
+  assert.deepEqual(names(infer(ix, [...appFns, one("tiny")], "exact")), ["app"], "off: one tiny function is too little");
+  assert.deepEqual(names(infer(ix, [...appFns, one("tiny")], "exact", { depConfirm: true })), ["app", "tiny"], "1.0.0 is still possible and declares tiny");
+  assert.equal(infer(ix, [...appFns, one("tiny")], "exact", { depConfirm: true }).find((d) => d.name === "tiny").viaDependency, "app");
+  // the parent's own reference holds the dependency's code (a prebuilt build): not a separate package
+  const both = fn(ix, 20, [[recOf(ix, "tiny", 0), 1, true], [recOf(ix, "app", 0), 1, true]], { ntok: 10 });
+  assert.deepEqual(names(infer(ix, [...appFns, both], "exact", { depConfirm: true })), ["app"]);
+});
+
+test("unique functions: a package matched only through code other packages hold too is not accepted — unless they declare it as a dependency", () => {
+  const ix = mockIndex([
+    { name: "lib", versions: ["1.0.0"], fns: Array.from({ length: 10 }, () => [0]) },
+    { name: "copier", versions: ["1.0.0"], fns: Array.from({ length: 10 }, () => [0]) },
+    ...fillers(50),
+  ]);
+  const fns = Array.from({ length: 10 }, (_, j) => fn(ix, j, [[recOf(ix, "lib", j), 1, true], [recOf(ix, "copier", j), 1, true]]));
+  assert.ok(infer(ix, fns, "exact").length >= 1, "greedy: found through the shared code");
+  assert.deepEqual(infer(ix, fns, "exact", { minUnique: 1 }), [], "neither has a function of its own");
+  ix.deps = new Map([[1, new Map([["1.0.0", { dependencies: [0], ranges: new Map([[0, "*"]]) }]])]]); delete ix._depsAny; // (the dependency cache is built once per index)
+  assert.deepEqual(names(infer(ix, fns, "exact", { minUnique: 1 })), ["lib"], "copier declares lib: its copies don't count against lib");
+});
+
+test("declared ranges narrow a dependency's versions (override: also when the code points elsewhere)", () => {
+  const ix = mockIndex([
+    { name: "app", versions: ["1.0.0"], fns: Array.from({ length: 10 }, () => [0]) },
+    { name: "dep", versions: ["1.0.0", "1.1.0", "2.0.0", "2.1.0"], fns: [[0, 1, 2, 3], [0, 1, 2, 3], [0, 1], [0, 1]] },
+    ...fillers(50),
+  ]);
+  ix.deps = new Map([[0, new Map([["1.0.0", { dependencies: [1], ranges: new Map([[1, "^1.0.0"]]) }]])]]);
+  const fns = [...Array.from({ length: 10 }, (_, j) => fn(ix, j, [[recOf(ix, "app", j), 1, true]])), ...[0, 1].map((j) => fn(ix, 20 + j, [[recOf(ix, "dep", j), 1, true]]))];
+  const dep = (o) => infer(ix, fns, "exact", { smallCoverage: 0.4, ...o }).find((d) => d.name === "dep");
+  assert.equal(dep({}).best, "2.1.0"); assert.equal(dep({}).rangeSize, 4);
+  assert.equal(dep({ depRanges: "restrict" }).best, "1.1.0"); assert.deepEqual(dep({ depRanges: "restrict" }).range, [["1.0.0", "1.1.0"]]);
 });
 
 test("functions found in more than maxShared packages give no evidence", () => {

@@ -1,0 +1,5 @@
+{ "frozen_at": "2026-11-21T01:56+01:00",
+  "tier2": { "KEEP_EXPORTS": "1", "MINIFY": "1", "mode": "streamed" },
+  "tier3": { "NORMALIZE": "swc+modules", "CANONICAL_REQUIRE": "1", "DEPENDENCIES": "1", "DEP_CONFIRM": "1",
+             "MIN_UNIQUE": "1", "MIN_EXACT": "2", "DEP_RANGES": "override", "MIN_VERSION_SHARE": "0.1",
+             "MODES": "exact,approx+lineage", "other": "library defaults" } }

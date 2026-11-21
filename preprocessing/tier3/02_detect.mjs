@@ -27,7 +27,7 @@ import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, rename
 import { join, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { loadIndex } from "./lib/index.mjs";
-import { prepareBundle, matchBundle, infer, MODES, DEFAULTS } from "./lib/detect.mjs";
+import { prepareBundle, matchBundle, infer, dependsOn, MODES, DEFAULTS } from "./lib/detect.mjs";
 import { truthFromSbom, evaluateBundle, analyzeFunctions } from "./lib/evaluate.mjs";
 import { attributeFunctions } from "./lib/sourcemap.mjs";
 
@@ -61,8 +61,11 @@ const ix = loadIndex(resolve(INDEX));
 console.log(`index: ${ix.N} functions of ${ix.P} packages (built ${ix.meta.built_at}), loaded in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 const opts = { ...DEFAULTS, ...userOpts };
 // bump CODE when the detection or evaluation logic changes, so earlier results are redone
-const CODE = 6;
-const settings = { code: CODE, modes, opts, evaluate, index: { built_at: ix.meta.built_at, source_signature: ix.meta.source_signature ?? null, records: ix.N } };
+const CODE = 8;
+// the input functions' normalisation (step 00), so switching it redoes the bundles
+let normalized = null;
+try { normalized = JSON.parse(readFileSync(join(funcDir, files[0]), "utf8")).normalized?.transform ?? null; } catch {}
+const settings = { code: CODE, modes, opts, evaluate, functions: funcDir, normalized, index: { built_at: ix.meta.built_at, source_signature: ix.meta.source_signature ?? null, records: ix.N } };
 const settingsHash = createHash("sha256").update(JSON.stringify(settings)).digest("hex").slice(0, 16);
 const indexed = new Map(ix.meta.packages.map((p) => [p.name, p.versions]));
 const names = ix.meta.packages.map((p) => p.name);
@@ -78,7 +81,7 @@ for (const [i, f] of files.entries()) {
   }
   try {
     const doc = JSON.parse(readFileSync(join(funcDir, f), "utf8"));
-    const fns = matchBundle(ix, prepareBundle(doc, ix.meta.tier2_settings), opts);
+    const fns = matchBundle(ix, prepareBundle(doc, ix.meta.tier2_settings, !!ix.meta.canonical_require), opts);
     const stats = {
       functions: doc.functions?.length ?? 0, nonTrivial: fns.length,
       exactMatched: fns.filter((x) => x.exactPkgs.size).length,
@@ -106,6 +109,12 @@ for (const [i, f] of files.entries()) {
       if (truth) {
         const rows = evaluateBundle(detections, truth, indexed);
         entry.evaluation = { rows, functions: attribution ? analyzeFunctions(rows, detections, attribution, fns, names, m, opts.minSim) : null };
+        // a wrong detection whose matched code comes from a package that declares it as a dependency
+        // (directly or transitively, npm registry): that package ships a build with it compiled in, so the
+        // code is in the bundle though the SBOM cannot list it — counted in code-present precision
+        const pIdx = new Map(names.map((n, i) => [n, i]));
+        for (const r of rows) if (r.status === "FP" && r.codeFrom && pIdx.has(r.codeFrom) && dependsOn(ix, pIdx.get(r.codeFrom), pIdx.get(r.name)))
+          r.reason = `compiled into ${r.codeFrom} (declared dependency)`;
         const tp = rows.filter((r) => r.status === "TP").length, fp = rows.filter((r) => r.status === "FP").length, fn = rows.filter((r) => r.status === "FN").length;
         brief.push(`${m}: ${detections.length} packages, P ${pct(tp + fp ? tp / (tp + fp) : null)} R ${pct(tp + fn ? tp / (tp + fn) : null)}`);
       } else brief.push(`${m}: ${detections.length} packages`);

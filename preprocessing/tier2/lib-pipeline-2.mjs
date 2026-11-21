@@ -34,6 +34,7 @@ export const PARAMS = [
   { key: "KEEP_ARTIFACTS", group: "mode", label: "Keep these intermediate files", help: "Ticked steps keep all their files; unticked ones are deleted as soon as each package is done.", type: "multi", options: KEEP_OPTIONS, fixed: [{ label: "Each package's function collection", help: "packages/<package>.json — always kept" }, { label: "Logs", help: "always kept" }, { label: "Per-version records and group manifests", help: "always kept" }], default: "03", modes: ["streamed"] },
   { key: "VERSIONS", group: "packages", label: "Versions per package", help: "all = every published stable version (Aletheia's full index). minor = patches of the observed major.minor. latest = newest only. exact = the observed version only.", type: "select", options: ["all", "minor", "latest", "exact"], default: "all" },
   { key: "INCLUDE_PACKAGE", group: "packages", label: "Include the selected packages themselves", help: "Off = index only their dependencies.", type: "bool", default: "1" },
+  { key: "KEEP_EXPORTS", group: "extraction", label: "Keep exported code (not in the original)", help: "The original Aletheia pseudo-bundler removes every export statement together with the exported declaration, so ES-module packages lose most of their code. On = keep it, reachable through _$__e.exports. Off = faithful.", type: "bool", default: "0" },
   { key: "MINIFY", group: "extraction", label: "Minify pseudo-bundles", help: "On = faithful to Aletheia (swc). Off = un-minified, so line counts in function extraction are real.", type: "bool", default: "0" },
   { key: "MIN_LOC", group: "extraction", label: "Minimum lines of code", help: "Keep only functions with at least this many lines. 0 = keep all; 6 = the Debun paper's filter.", type: "number", default: "0" },
   { key: "DEDUP_MODE", group: "dedup", label: "Compare bodies as", help: "normalized: locals renamed v0, v1, … so a renamed variable still matches. exact: raw body text.", type: "select", options: ["normalized", "exact"], default: "normalized" },
@@ -165,7 +166,7 @@ export function buildCommand(step, p) {
     case "03":
       // step 03 only reads UNMINIFIED=1 (MINIFY was passed but never read), so translate here,
       // exactly as the streamed driver does
-      return { cmd: node, args: [join(HERE, "03_pseudo-bundle.mjs"), d.D2, d.D3, p.BUNDLE_CONC], cwd: HERE, env: { MINIFY: p.MINIFY, ...(String(p.MINIFY) === "0" ? { UNMINIFIED: "1" } : {}) } };
+      return { cmd: node, args: [join(HERE, "03_pseudo-bundle.mjs"), d.D2, d.D3, p.BUNDLE_CONC], cwd: HERE, env: { MINIFY: p.MINIFY, KEEP_EXPORTS: String(p.KEEP_EXPORTS ?? "0") === "1" ? "1" : "0", ...(String(p.MINIFY) === "0" ? { UNMINIFIED: "1" } : {}) } };
     case "04":
       return { cmd: node, args: [join(HERE, "04_extract-functions.mjs"), join(d.D3, "bundles"), d.D4, "--min-loc", p.MIN_LOC], cwd: HERE, env: {} };
     case "05": {
@@ -186,7 +187,7 @@ export function buildCommand(step, p) {
       if (String(p.DEDUP_STRICT_TYPE) === "1") a.push("--strict-type");
       if (String(p.INCLUDE_PACKAGE) === "0") a.push("--no-package");
       // MINIFY is translated to step 03's UNMINIFIED inside the driver (step 03 is untouched)
-      return { cmd: node, args: a, cwd: HERE, env: { MINIFY: p.MINIFY } };
+      return { cmd: node, args: a, cwd: HERE, env: { MINIFY: p.MINIFY, KEEP_EXPORTS: String(p.KEEP_EXPORTS ?? "0") === "1" ? "1" : "0" } };
     }
     case "07": {
       // same 6 GB heap as batch step 05: the merge holds every unique function in memory

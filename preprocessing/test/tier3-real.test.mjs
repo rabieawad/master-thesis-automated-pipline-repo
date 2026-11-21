@@ -151,11 +151,11 @@ test("pipeline wiring: tier 3 is a project tier reading tier 1's and tier 2's ou
   assert.equal(arg("--functions"), join(T1, "06_extracted_functions"));
   assert.equal(arg("--sbom"), join(T1, "05_selected_bundles", "sbom"));
   assert.equal(arg("--modes"), "approx");
-  assert.deepEqual(JSON.parse(arg("--opts")), { minSim: 0.6, minBands: 2, maxShared: 30, minEvidence: 1.5, minFunctions: 2, minCoverage: 0.05, smallCoverage: 0.5, shareCoverage: 0.5, versionTolerance: 0.03, versionPick: "parsimony", versionMethod: "intersect", versionFallback: "most" });
+  assert.deepEqual(JSON.parse(arg("--opts")), { minSim: 0.6, minBands: 2, maxShared: 30, minEvidence: 1.5, minFunctions: 2, minCoverage: 0.05, smallCoverage: 0.5, shareCoverage: 0.5, versionTolerance: 0.03, versionPick: "parsimony", versionMethod: "intersect", versionFallback: "most", algorithm: "greedy", sizeAware: false, minVersionShare: 0, minUnique: 0, minExact: 0, depConfirm: false, depRanges: "off" });
   assert.ok(c2.args.includes("--no-evaluate"));
   const c1 = buildTierCommand(proj, "tier3", "01");
   assert.equal(c1.args[1], join(tierOutput(proj, "tier2"), "05_deduplicated_functions"));
-  assert.deepEqual(Object.keys(stepDirsForTier(proj, "tier3")), ["01", "02", "03"]);
+  assert.deepEqual(Object.keys(stepDirsForTier(proj, "tier3")), ["00", "01", "01b", "02", "03"]);
   assert.deepEqual(T3.detectOptions({ MIN_SIM: "", MAX_SHARED: "abc", VERSION_PICK: "oldest" }), {});
 
   // the "all" command, on the fixture folders

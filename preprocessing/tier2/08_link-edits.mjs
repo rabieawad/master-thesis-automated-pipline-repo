@@ -20,6 +20,7 @@
 //        [--include-trivial] [--max-rule 3]
 
 import { readFileSync, writeFileSync, renameSync, readdirSync, existsSync, mkdirSync, statSync, createReadStream, createWriteStream } from "node:fs";
+import { isPackageFile, keyOfPackageFile, readJsonFile, writeJsonFile } from "./lib/json-gz.mjs";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { analyzePackage } from "./lib/lineage.mjs";
@@ -40,7 +41,7 @@ if (!(settings.max_rule >= 1)) { console.error("--max-rule must be ≥ 1"); proc
 if (!existsSync(PKG)) { console.error(`no per-package files in ${PKG}: this step needs streamed tier 2 (its stream step writes packages/<package>.json)`); process.exit(1); }
 mkdirSync(LIN, { recursive: true });
 
-const files = readdirSync(PKG).filter((f) => f.endsWith(".json")).sort();
+const files = readdirSync(PKG).filter(isPackageFile).sort();
 console.log(`packages    : ${PKG}  (${files.length} file(s))`);
 console.log(`lineages    : ${LIN}`);
 console.log(`settings    : min similarity ${settings.min_similarity}, trivial functions ${settings.include_trivial ? "included" : "left out"}, at most ${settings.max_rule} markers per rule\n`);
@@ -53,7 +54,7 @@ const lineageOf = new Map(); // `${pkgKey}\0${id}` -> lineage, for unique_functi
 let done = 0, skipped = 0, failed = 0;
 
 for (const [i, f] of files.entries()) {
-  const file = join(PKG, f), pkgKey = f.slice(0, -5), out = join(LIN, f), t0 = Date.now();
+  const file = join(PKG, f), pkgKey = keyOfPackageFile(f), out = join(LIN, `${pkgKey}.json`), t0 = Date.now();
   try {
     const st = statSync(file);
     let prev = null; try { prev = JSON.parse(readFileSync(out, "utf8")); } catch {}
@@ -63,12 +64,12 @@ for (const [i, f] of files.entries()) {
       console.log(`[${i + 1}/${files.length}] done  ${prev.package}  (already linked)`);
       continue;
     }
-    const doc = JSON.parse(readFileSync(file, "utf8"));
+    const doc = readJsonFile(file);
     const r = analyzePackage(doc, { minSimilarity: settings.min_similarity, includeTrivial: settings.include_trivial, maxRule: settings.max_rule });
     // the package file: only the lineage tag per function (and nothing from an older version of this step)
     for (const fn of doc.functions) { delete fn.edit; delete fn.lineage; fn.lineage = r.index[fn.id]; }
     delete doc.lineage_info;
-    writeAtomic(file, JSON.stringify(doc, null, 1));
+    writeJsonFile(file, doc, file.endsWith(".gz") ? undefined : 1);
     const st2 = statSync(file);
     writeAtomic(out, JSON.stringify({
       package: doc.package, versions: doc.versions.length, settings,

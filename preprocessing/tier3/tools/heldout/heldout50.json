@@ -1,0 +1,352 @@
+[
+ {
+  "key": "@amplitude+analytics-browser@2.49.4",
+  "name": "@amplitude/analytics-browser",
+  "category": "analytics",
+  "fns": 2809,
+  "size": "large"
+ },
+ {
+  "key": "@antv+g2plot@2.4.35",
+  "name": "@antv/g2plot",
+  "category": "charts",
+  "fns": 11341,
+  "size": "large"
+ },
+ {
+  "key": "@daybrush+utils@1.13.0",
+  "name": "@daybrush/utils",
+  "category": "animation",
+  "fns": 192,
+  "size": "medium"
+ },
+ {
+  "key": "@googlemaps+js-api-loader@2.1.3",
+  "name": "@googlemaps/js-api-loader",
+  "category": "maps",
+  "fns": 26,
+  "size": "small"
+ },
+ {
+  "key": "@hookform+devtools@4.4.0",
+  "name": "@hookform/devtools",
+  "category": "validation",
+  "fns": 10,
+  "size": "small"
+ },
+ {
+  "key": "@monaco-editor+react@4.7.0",
+  "name": "@monaco-editor/react",
+  "category": "editors",
+  "fns": 243,
+  "size": "medium"
+ },
+ {
+  "key": "@mparticle+web-sdk@2.81.0",
+  "name": "@mparticle/web-sdk",
+  "category": "analytics",
+  "fns": 964,
+  "size": "medium"
+ },
+ {
+  "key": "@perspective-dev+client@5.9.4",
+  "name": "@perspective-dev/client",
+  "category": "analytics",
+  "fns": 522,
+  "size": "medium"
+ },
+ {
+  "key": "@progress+kendo-react-dateinputs@17.0.0",
+  "name": "@progress/kendo-react-dateinputs",
+  "category": "dates",
+  "fns": 4829,
+  "size": "large"
+ },
+ {
+  "key": "@tsparticles+basic@4.6.0",
+  "name": "@tsparticles/basic",
+  "category": "animation",
+  "fns": 1056,
+  "size": "large"
+ },
+ {
+  "key": "@umijs+use-params@1.0.9",
+  "name": "@umijs/use-params",
+  "category": "state",
+  "fns": 100,
+  "size": "small"
+ },
+ {
+  "key": "@unovis+ts@1.8.1",
+  "name": "@unovis/ts",
+  "category": "maps",
+  "fns": 27988,
+  "size": "large"
+ },
+ {
+  "key": "@vee-validate+zod@4.15.1",
+  "name": "@vee-validate/zod",
+  "category": "validation",
+  "fns": 2178,
+  "size": "large"
+ },
+ {
+  "key": "@vue+compiler-sfc@3.5.46",
+  "name": "@vue/compiler-sfc",
+  "category": "ui (vue)",
+  "fns": 3533,
+  "size": "large"
+ },
+ {
+  "key": "@wojtekmaj+react-datetimerange-picker@7.1.0",
+  "name": "@wojtekmaj/react-datetimerange-picker",
+  "category": "dates",
+  "fns": 655,
+  "size": "medium"
+ },
+ {
+  "key": "@zag-js+dom-query@1.48.0",
+  "name": "@zag-js/dom-query",
+  "category": "dom",
+  "fns": 651,
+  "size": "medium"
+ },
+ {
+  "key": "aspida@1.14.0",
+  "name": "aspida",
+  "category": "http",
+  "fns": 21,
+  "size": "small"
+ },
+ {
+  "key": "autocompleter@10.1.0",
+  "name": "autocompleter",
+  "category": "http",
+  "fns": 48,
+  "size": "small"
+ },
+ {
+  "key": "azure-maps-control@3.7.4",
+  "name": "azure-maps-control",
+  "category": "maps",
+  "fns": 8868,
+  "size": "large"
+ },
+ {
+  "key": "camelcase-css@2.0.1",
+  "name": "camelcase-css",
+  "category": "dom",
+  "fns": 11,
+  "size": "small"
+ },
+ {
+  "key": "chartjs-chart-treemap@5.0.2",
+  "name": "chartjs-chart-treemap",
+  "category": "charts",
+  "fns": 1824,
+  "size": "large"
+ },
+ {
+  "key": "ckeditor4@4.25.2",
+  "name": "ckeditor4",
+  "category": "editors",
+  "fns": 3158,
+  "size": "large"
+ },
+ {
+  "key": "css-tree@3.2.1",
+  "name": "css-tree",
+  "category": "validation",
+  "fns": 1095,
+  "size": "large"
+ },
+ {
+  "key": "embla-carousel-class-names@8.6.0",
+  "name": "embla-carousel-class-names",
+  "category": "ui (vue)",
+  "fns": 28,
+  "size": "small"
+ },
+ {
+  "key": "gantt-task-react@0.3.9",
+  "name": "gantt-task-react",
+  "category": "charts",
+  "fns": 230,
+  "size": "medium"
+ },
+ {
+  "key": "grapesjs@0.23.9",
+  "name": "grapesjs",
+  "category": "editors",
+  "fns": 8463,
+  "size": "large"
+ },
+ {
+  "key": "hast-util-from-html-isomorphic@2.0.0",
+  "name": "hast-util-from-html-isomorphic",
+  "category": "utilities",
+  "fns": 98,
+  "size": "small"
+ },
+ {
+  "key": "hast-util-from-html@2.1.0",
+  "name": "hast-util-from-html",
+  "category": "utilities",
+  "fns": 793,
+  "size": "medium"
+ },
+ {
+  "key": "hast-util-is-element@3.0.0",
+  "name": "hast-util-is-element",
+  "category": "utilities",
+  "fns": 18,
+  "size": "small"
+ },
+ {
+  "key": "hast-util-select@6.0.5",
+  "name": "hast-util-select",
+  "category": "utilities",
+  "fns": 382,
+  "size": "medium"
+ },
+ {
+  "key": "jszip-utils@0.1.0",
+  "name": "jszip-utils",
+  "category": "http",
+  "fns": 19,
+  "size": "small"
+ },
+ {
+  "key": "konva@10.10.0",
+  "name": "konva",
+  "category": "animation",
+  "fns": 1151,
+  "size": "large"
+ },
+ {
+  "key": "morphdom@2.7.8",
+  "name": "morphdom",
+  "category": "dom",
+  "fns": 29,
+  "size": "small"
+ },
+ {
+  "key": "nanostores@1.5.5",
+  "name": "nanostores",
+  "category": "state",
+  "fns": 161,
+  "size": "medium"
+ },
+ {
+  "key": "ngx-skeleton-loader@14.0.0",
+  "name": "ngx-skeleton-loader",
+  "category": "animation",
+  "fns": 5997,
+  "size": "large"
+ },
+ {
+  "key": "pikaday@1.8.2",
+  "name": "pikaday",
+  "category": "dates",
+  "fns": 76,
+  "size": "small"
+ },
+ {
+  "key": "rc-tabs@15.7.0",
+  "name": "rc-tabs",
+  "category": "ui (react)",
+  "fns": 1179,
+  "size": "large"
+ },
+ {
+  "key": "rc-trigger@5.3.4",
+  "name": "rc-trigger",
+  "category": "ui (react)",
+  "fns": 842,
+  "size": "medium"
+ },
+ {
+  "key": "react-datepicker@9.1.0",
+  "name": "react-datepicker",
+  "category": "ui (react)",
+  "fns": 2876,
+  "size": "large"
+ },
+ {
+  "key": "react-datetime-picker@7.1.0",
+  "name": "react-datetime-picker",
+  "category": "dates",
+  "fns": 651,
+  "size": "medium"
+ },
+ {
+  "key": "react-places-autocomplete@7.3.0",
+  "name": "react-places-autocomplete",
+  "category": "maps",
+  "fns": 161,
+  "size": "medium"
+ },
+ {
+  "key": "recharts@3.11.0",
+  "name": "recharts",
+  "category": "ui (react)",
+  "fns": 7148,
+  "size": "large"
+ },
+ {
+  "key": "redux-watch@1.2.0",
+  "name": "redux-watch",
+  "category": "state",
+  "fns": 42,
+  "size": "small"
+ },
+ {
+  "key": "squire-rte@2.4.11",
+  "name": "squire-rte",
+  "category": "editors",
+  "fns": 260,
+  "size": "medium"
+ },
+ {
+  "key": "use-analytics@1.1.0",
+  "name": "use-analytics",
+  "category": "analytics",
+  "fns": 115,
+  "size": "small"
+ },
+ {
+  "key": "use-local-storage-state@20.0.0",
+  "name": "use-local-storage-state",
+  "category": "state",
+  "fns": 94,
+  "size": "small"
+ },
+ {
+  "key": "vue-hot-reload-api@2.3.4",
+  "name": "vue-hot-reload-api",
+  "category": "ui (vue)",
+  "fns": 26,
+  "size": "small"
+ },
+ {
+  "key": "vuedraggable@2.24.3",
+  "name": "vuedraggable",
+  "category": "ui (vue)",
+  "fns": 504,
+  "size": "medium"
+ },
+ {
+  "key": "xhr-mock@2.5.1",
+  "name": "xhr-mock",
+  "category": "http",
+  "fns": 420,
+  "size": "medium"
+ },
+ {
+  "key": "xmldom@0.6.0",
+  "name": "xmldom",
+  "category": "dom",
+  "fns": 182,
+  "size": "medium"
+ }
+]

@@ -1,0 +1,453 @@
+{
+ "seed": 20261121,
+ "per": 5,
+ "top": 100,
+ "minMonthly": 100000,
+ "categories": {
+  "ui (react)": [
+   "keywords:react-component",
+   false
+  ],
+  "ui (vue)": [
+   "keywords:vue",
+   true
+  ],
+  "dates": [
+   "keywords:date",
+   true
+  ],
+  "charts": [
+   "keywords:chart",
+   false
+  ],
+  "http": [
+   "keywords:ajax",
+   true
+  ],
+  "state": [
+   "keywords:state",
+   true
+  ],
+  "editors": [
+   "keywords:editor",
+   true
+  ],
+  "animation": [
+   "keywords:animation",
+   false
+  ],
+  "maps": [
+   "keywords:maps",
+   true
+  ],
+  "analytics": [
+   "keywords:analytics",
+   true
+  ],
+  "utilities": [
+   "keywords:utility",
+   true
+  ],
+  "dom": [
+   "keywords:dom",
+   false
+  ],
+  "validation": [
+   "keywords:validation",
+   true
+  ]
+ },
+ "excluded": 151,
+ "candidates": [
+  {
+   "category": "ui (react)",
+   "name": "rc-tabs",
+   "version": "15.7.0",
+   "monthly": 13106396
+  },
+  {
+   "category": "ui (react)",
+   "name": "recharts",
+   "version": "3.11.0",
+   "monthly": 286468062
+  },
+  {
+   "category": "ui (react)",
+   "name": "@mui/system",
+   "version": "9.5.0",
+   "monthly": 65201237
+  },
+  {
+   "category": "ui (react)",
+   "name": "react-datepicker",
+   "version": "9.1.0",
+   "monthly": 29188696
+  },
+  {
+   "category": "ui (react)",
+   "name": "rc-trigger",
+   "version": "5.3.4",
+   "monthly": 8526878
+  },
+  {
+   "category": "ui (vue)",
+   "name": "@vue/compiler-sfc",
+   "version": "3.5.46",
+   "monthly": 144089914
+  },
+  {
+   "category": "ui (vue)",
+   "name": "vue-hot-reload-api",
+   "version": "2.3.4",
+   "monthly": 5228218
+  },
+  {
+   "category": "ui (vue)",
+   "name": "vuedraggable",
+   "version": "2.24.3",
+   "monthly": 8823054
+  },
+  {
+   "category": "ui (vue)",
+   "name": "@tsparticles/updater-life",
+   "version": "4.6.0",
+   "monthly": 2008844
+  },
+  {
+   "category": "ui (vue)",
+   "name": "embla-carousel-class-names",
+   "version": "8.6.0",
+   "monthly": 4444280
+  },
+  {
+   "category": "dates",
+   "name": "@wojtekmaj/react-datetimerange-picker",
+   "version": "7.1.0",
+   "monthly": 562084
+  },
+  {
+   "category": "dates",
+   "name": "@progress/kendo-react-dateinputs",
+   "version": "17.0.0",
+   "monthly": 653829
+  },
+  {
+   "category": "dates",
+   "name": "pikaday",
+   "version": "1.8.2",
+   "monthly": 1868710
+  },
+  {
+   "category": "dates",
+   "name": "react-datetime-picker",
+   "version": "7.1.0",
+   "monthly": 948102
+  },
+  {
+   "category": "dates",
+   "name": "ng2-date-picker",
+   "version": "22.0.0",
+   "monthly": 104532
+  },
+  {
+   "category": "charts",
+   "name": "@coreui/chartjs",
+   "version": "4.2.0",
+   "monthly": 491434
+  },
+  {
+   "category": "charts",
+   "name": "gantt-task-react",
+   "version": "0.3.9",
+   "monthly": 275356
+  },
+  {
+   "category": "charts",
+   "name": "@antv/g2plot",
+   "version": "2.4.35",
+   "monthly": 532985
+  },
+  {
+   "category": "charts",
+   "name": "ag-charts-react",
+   "version": "14.3.0",
+   "monthly": 1739664
+  },
+  {
+   "category": "charts",
+   "name": "chartjs-chart-treemap",
+   "version": "5.0.2",
+   "monthly": 380650
+  },
+  {
+   "category": "http",
+   "name": "xhr-mock",
+   "version": "2.5.1",
+   "monthly": 1224929
+  },
+  {
+   "category": "http",
+   "name": "autocompleter",
+   "version": "10.1.0",
+   "monthly": 640859
+  },
+  {
+   "category": "http",
+   "name": "aspida",
+   "version": "1.14.0",
+   "monthly": 268264
+  },
+  {
+   "category": "http",
+   "name": "jszip-utils",
+   "version": "0.1.0",
+   "monthly": 327681
+  },
+  {
+   "category": "http",
+   "name": "react-activity",
+   "version": "2.1.3",
+   "monthly": 193719
+  },
+  {
+   "category": "state",
+   "name": "use-local-storage-state",
+   "version": "20.0.0",
+   "monthly": 3417539
+  },
+  {
+   "category": "state",
+   "name": "nanostores",
+   "version": "1.5.5",
+   "monthly": 85793243
+  },
+  {
+   "category": "state",
+   "name": "zustand",
+   "version": "5.1.0",
+   "monthly": 394674885
+  },
+  {
+   "category": "state",
+   "name": "@umijs/use-params",
+   "version": "1.0.9",
+   "monthly": 1321546
+  },
+  {
+   "category": "state",
+   "name": "redux-watch",
+   "version": "1.2.0",
+   "monthly": 268028
+  },
+  {
+   "category": "editors",
+   "name": "ckeditor4",
+   "version": "4.25.2",
+   "monthly": 299271
+  },
+  {
+   "category": "editors",
+   "name": "@monaco-editor/react",
+   "version": "4.7.0",
+   "monthly": 41575571
+  },
+  {
+   "category": "editors",
+   "name": "squire-rte",
+   "version": "2.4.11",
+   "monthly": 270740
+  },
+  {
+   "category": "editors",
+   "name": "grapesjs",
+   "version": "0.23.9",
+   "monthly": 2459425
+  },
+  {
+   "category": "editors",
+   "name": "open",
+   "version": "11.0.4",
+   "monthly": 978544547
+  },
+  {
+   "category": "animation",
+   "name": "ngx-skeleton-loader",
+   "version": "14.0.0",
+   "monthly": 1283929
+  },
+  {
+   "category": "animation",
+   "name": "@tsparticles/basic",
+   "version": "4.6.0",
+   "monthly": 1963168
+  },
+  {
+   "category": "animation",
+   "name": "konva",
+   "version": "10.10.0",
+   "monthly": 16381494
+  },
+  {
+   "category": "animation",
+   "name": "@svgdotjs/svg.js",
+   "version": "3.2.8",
+   "monthly": 4612831
+  },
+  {
+   "category": "animation",
+   "name": "@daybrush/utils",
+   "version": "1.13.0",
+   "monthly": 4041345
+  },
+  {
+   "category": "maps",
+   "name": "@unovis/ts",
+   "version": "1.8.1",
+   "monthly": 1513536
+  },
+  {
+   "category": "maps",
+   "name": "react-places-autocomplete",
+   "version": "7.3.0",
+   "monthly": 1129273
+  },
+  {
+   "category": "maps",
+   "name": "@googlemaps/js-api-loader",
+   "version": "2.1.3",
+   "monthly": 34139163
+  },
+  {
+   "category": "maps",
+   "name": "azure-maps-control",
+   "version": "3.7.4",
+   "monthly": 698355
+  },
+  {
+   "category": "maps",
+   "name": "@agm/core",
+   "version": "3.0.0-beta.0",
+   "monthly": 134276
+  },
+  {
+   "category": "analytics",
+   "name": "@mparticle/web-sdk",
+   "version": "2.81.0",
+   "monthly": 155659
+  },
+  {
+   "category": "analytics",
+   "name": "@perspective-dev/client",
+   "version": "5.9.4",
+   "monthly": 155528
+  },
+  {
+   "category": "analytics",
+   "name": "use-analytics",
+   "version": "1.1.0",
+   "monthly": 509544
+  },
+  {
+   "category": "analytics",
+   "name": "@microsoft/clarity",
+   "version": "1.0.2",
+   "monthly": 2524465
+  },
+  {
+   "category": "analytics",
+   "name": "@amplitude/analytics-browser",
+   "version": "2.49.4",
+   "monthly": 15269559
+  },
+  {
+   "category": "utilities",
+   "name": "hast-util-from-html",
+   "version": "2.1.0",
+   "monthly": 94158223
+  },
+  {
+   "category": "utilities",
+   "name": "hast-util-select",
+   "version": "6.0.5",
+   "monthly": 19980211
+  },
+  {
+   "category": "utilities",
+   "name": "react-merge-refs",
+   "version": "3.0.2",
+   "monthly": 11009513
+  },
+  {
+   "category": "utilities",
+   "name": "hast-util-from-html-isomorphic",
+   "version": "2.0.0",
+   "monthly": 51718586
+  },
+  {
+   "category": "utilities",
+   "name": "hast-util-is-element",
+   "version": "3.0.0",
+   "monthly": 109268314
+  },
+  {
+   "category": "dom",
+   "name": "camelcase-css",
+   "version": "2.0.1",
+   "monthly": 190506735
+  },
+  {
+   "category": "dom",
+   "name": "xmldom",
+   "version": "0.6.0",
+   "monthly": 7252190
+  },
+  {
+   "category": "dom",
+   "name": "txml",
+   "version": "6.0.3",
+   "monthly": 1597009
+  },
+  {
+   "category": "dom",
+   "name": "morphdom",
+   "version": "2.7.8",
+   "monthly": 5173381
+  },
+  {
+   "category": "dom",
+   "name": "@zag-js/dom-query",
+   "version": "1.48.0",
+   "monthly": 15508276
+  },
+  {
+   "category": "validation",
+   "name": "@vee-validate/nuxt",
+   "version": "4.15.1",
+   "monthly": 387236
+  },
+  {
+   "category": "validation",
+   "name": "anchor",
+   "version": "1.4.2",
+   "monthly": 306966
+  },
+  {
+   "category": "validation",
+   "name": "@hookform/devtools",
+   "version": "4.4.0",
+   "monthly": 3453446
+  },
+  {
+   "category": "validation",
+   "name": "@vee-validate/zod",
+   "version": "4.15.1",
+   "monthly": 1904634
+  },
+  {
+   "category": "validation",
+   "name": "css-tree",
+   "version": "3.2.1",
+   "monthly": 736972489
+  }
+ ]
+}

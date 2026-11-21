@@ -16,8 +16,8 @@ import { buildIndex, sourceSignature, INDEX_VERSION } from "./lib/index.mjs";
 
 const args = process.argv.slice(2);
 const pos = args.filter((a) => !a.startsWith("--"));
-const force = args.includes("--force");
-if (pos.length < 2) { console.error("usage: node 01_build-index.mjs <tier2 05_deduplicated_functions> <outDir> [--force]"); process.exit(2); }
+const force = args.includes("--force"), canonical = args.includes("--canonical-require");
+if (pos.length < 2) { console.error("usage: node 01_build-index.mjs <tier2 05_deduplicated_functions> <outDir> [--canonical-require] [--force]"); process.exit(2); }
 const src = resolve(pos[0]), out = resolve(pos[1]);
 
 if (!existsSync(join(src, "packages"))) {
@@ -30,7 +30,7 @@ const metaFile = join(out, "meta.json");
 if (!force && existsSync(metaFile)) {
   try {
     const m = JSON.parse(readFileSync(metaFile, "utf8"));
-    if (m.index_version === INDEX_VERSION && m.source_signature === sig) {
+    if (m.index_version === INDEX_VERSION && m.source_signature === sig && !!m.canonical_require === canonical) {
       console.log(`index is up to date (${m.records} functions of ${m.packages.length} packages, built ${m.built_at}); --force rebuilds it`);
       process.exit(0);
     }
@@ -41,6 +41,6 @@ if (!force && existsSync(metaFile)) {
 rmSync(join(out, "lineages"), { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 const t0 = Date.now();
-const meta = buildIndex(src, out, { log: (s) => console.log(s) });
+const meta = buildIndex(src, out, { log: (s) => console.log(s), canonicalRequire: canonical });
 const lin = meta.packages.filter((p) => p.hasLineages).length;
 console.log(`RESULT | index built | ${meta.records} non-trivial functions | ${meta.packages.length} packages (${lin} with lineages) | ${((Date.now() - t0) / 1000).toFixed(0)}s`);

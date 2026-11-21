@@ -45,6 +45,8 @@ import { identity } from "../../tier2/05_dedup-functions.mjs";
 import { markerSpace, hasMarker } from "../../tier2/lib/lineage.mjs";
 import { sketch, similarity } from "./sketch.mjs";
 import { rangeIndices, inRanges } from "./index.mjs";
+import { canonicalRequire } from "./modules.mjs";
+import semver from "semver";
 
 export const MODES = ["exact", "approx", "approx+lineage"];
 export const DEFAULTS = {
@@ -70,16 +72,74 @@ export const DEFAULTS = {
   strongEvidence: Infinity, // …unless its evidence is this strong (off: it brought in prebuilt mega-bundles)
   smallCoverage: 0.5,     // a small package is accepted when the bundle covers ≥ 50 % of it…
   smallEvidence: 0.5,     // …with at least this much evidence
+  // the package decision (step 3):
+  //   greedy       packages are accepted one after another and each explains (takes) the functions it
+  //                matches, which later packages can no longer use
+  //   independent  every package is judged on its own, on every function it matches about as well as
+  //                that function's best match (within explainDelta): a function found in several
+  //                packages counts for each of them, none takes it from another
+  algorithm: "greedy",
+  nearDelta: 0.05,        // independent: a function counts for p when p matches it within this of its best match
+                          // (1 = every match ≥ minSim counts: the package's own reference can match its code
+                          // worse than a prebuilt copy does, because the copy was minified like the bundle)
+  // size-aware requirement: a package needs a share of the evidence it could ever give, instead of a
+  // fixed minEvidence. potential(p, v) = Σ over p's non-trivial functions at version v of
+  // specificity × size (a function in more than maxShared packages gives 0). Required evidence =
+  // max(sizeFloor, min(minEvidence, sizeShare × potential)); required functions = min(minFunctions,
+  // half the package's function count, at least 1). Small or helper-like packages need little, large ones minEvidence.
+  sizeAware: false,
+  sizeShare: 0.5,
+  sizeFloor: 0.15,
+  // stub versions: a version with fewer non-trivial functions than minVersionShare × the package's
+  // median version is not used for coverage (placeholder releases such as @clerk/ui 0.0.1, four
+  // functions of webpack runtime, which any webpack bundle "covers"). 0 = off.
+  minVersionShare: 0,
+  // dependency confirmation (needs the index's dependencies.json, step 01b): after the decision, a
+  // package that a found package declares as a dependency is accepted with depMinFunctions distinct
+  // functions it matches (exact, or within depNear of the function's best match and ≥ minSim) —
+  // repeated, so dependencies of dependencies follow (qs → side-channel → get-intrinsic → gopd)
+  depConfirm: false,
+  depNear: 0.15,
+  depMinFunctions: 1,
+  depMinExact: 1,
+  depKinds: "dependencies,optionalDependencies", // which declared kinds count (peerDependencies are often not installed)
+  depFromConfirmed: false, // follow the dependencies of packages accepted through a dependency too
+  depEmbedded: 0.5,       // skip a dependency when more than this share of its matched code is also in the parent's reference (1 = off)
+  // declared ranges narrow versions: a found package that other found packages declare as a dependency
+  // (at their reported version) keeps only the versions of its range that satisfy one of the declared
+  // semver ranges; "override" also replaces a range that satisfies none (the code points elsewhere,
+  // e.g. when the reference lacks the newer code). off | restrict | override
+  depRanges: "off",
+  // ownership: of the packages that match a function about as well as its best match, the ones that
+  // only hold a COPY of it get copyWeight of its evidence. q holds a copy when another candidate r is
+  // a declared dependency of q (any version), or — without a dependency either way — q's median
+  // version is ownSizeRatio × larger than r's (a prebuilt build holding a small library).
+  // a package must have ≥ minUnique of its matched functions near-best ONLY for it (found in no other
+  // package's reference about as well — a package declaring it as a dependency holds a copy and does
+  // not count): a package that merely holds copies has none. 0 = off.
+  minUnique: 0,
+  minExact: 0,            // a package needs ≥ minExact exactly matched functions (approximate look-alikes alone don't count)…
+  exactUnlessCoverage: 0.3, // …unless its approximate matches cover at least this share of it
+  ownership: false,
+  copyWeight: 0,
+  ownSizeRatio: 5,
 };
 
 // The bundle's functions, prepared for matching: fingerprint as tier 2 computes it, sketch.
-export function prepareBundle(doc, tier2Settings = {}) {
+export function prepareBundle(doc, tier2Settings = {}, canon = false) {
   const mode = tier2Settings.dedup_mode ?? "normalized", strict = !!tier2Settings.strict_type, trivialNodes = tier2Settings.trivial_nodes ?? 6;
   const out = [];
   for (const fn of doc.functions ?? []) {
     const code = fn.textNorm ?? fn.text;
     if (code == null) continue;
     if ((fn.metrics?.nodes ?? 99) < trivialNodes) continue; // trivial: no evidence
+    // the index made require(...) canonical (step 01 --canonical-require): the same here
+    if (canon && code.includes("require(")) {
+      const c = canonicalRequire(code);
+      const { sig, ntok } = sketch(c);
+      out.push({ k: fn.index, id: identity({ ...fn, textNorm: c }, mode, strict), code: c, sig, ntok, propName: fn.propName ?? null });
+      continue;
+    }
     const { sig, ntok } = sketch(code);
     out.push({ k: fn.index, id: identity(fn, mode, strict), code, sig, ntok, propName: fn.propName ?? null });
   }
@@ -110,6 +170,61 @@ export function matchBundle(ix, fns, opts = {}) {
     f.bestSim = Math.max(0, ...[...byPkg.values()].map((e) => e.best));
   }
   return fns;
+}
+
+// potential(p)[v]: the evidence package p could give at version v if all its non-trivial functions
+// were in the bundle (exact matches): Σ specificity(packages sharing the function) × size
+function potential(ix, p, o) {
+  ix._potential ??= new Map();
+  let a = ix._potential.get(p);
+  if (a) return a;
+  const pkg = ix.meta.packages[p]; a = new Float64Array(pkg.versions.length);
+  for (let i = pkg.start; i < pkg.end; i++) {
+    const k = ix.pkgsOfId.get(ix.rec.id[i]) ?? 1;
+    const w = k > o.maxShared ? 0 : specificity(k, ix.P) * sizeWeight(ix.rec.ntok[i]);
+    if (w > 0) for (const v of rangeIndices(ix.rec.versions[i])) a[v] += w;
+  }
+  ix._potential.set(p, a);
+  return a;
+}
+
+// does package `from` declare package `to` as a dependency, directly or through up to `depth` levels?
+export function dependsOn(ix, from, to, depth = 3) {
+  if (!ix.deps?.size || from == null || to == null) return false;
+  let frontier = new Set([from]); const seen = new Set([from]);
+  for (let d = 0; d < depth && frontier.size; d++) {
+    const next = new Set();
+    for (const x of frontier) for (const y of depsAny(ix, x)) { if (y === to) return true; if (!seen.has(y)) { seen.add(y); next.add(y); } }
+    frontier = next;
+  }
+  return false;
+}
+// any-version dependency set of a package (from the index's dependencies.json)
+function depsAny(ix, p) {
+  ix._depsAny ??= new Map();
+  let s = ix._depsAny.get(p);
+  if (!s) { s = new Set(); for (const e of ix.deps?.get(p)?.values() ?? []) for (const [k, l] of Object.entries(e)) if (k !== "ranges") for (const d of l) s.add(d); ix._depsAny.set(p, s); }
+  return s;
+}
+// which of the near-best packages of a function only hold a copy of it (see DEFAULTS.ownership)
+function copyHolders(ix, view, o) {
+  const top = Math.max(...[...view.values()].map((e) => e.best));
+  const cand = [...view].filter(([, e]) => e.best >= top - o.explainDelta).map(([p]) => p);
+  if (cand.length < 2) return null;
+  const out = new Set();
+  for (const q of cand) for (const r of cand) {
+    if (q === r) continue;
+    const qr = depsAny(ix, q).has(r), rq = depsAny(ix, r).has(q);
+    if (qr && !rq) { out.add(q); break; }
+    if (!qr && !rq && medianSize(ix.meta.packages[q]) >= o.ownSizeRatio * Math.max(1, medianSize(ix.meta.packages[r]))) { out.add(q); break; }
+  }
+  return out.size < cand.length ? out : null; // never everyone
+}
+
+// the median non-trivial function count of a package's versions (versions with none left out)
+function medianSize(pkg) {
+  if (pkg._median == null) { const a = pkg.nonTrivial.filter((x) => x > 0).sort((x, y) => x - y); pkg._median = a.length ? a[a.length >> 1] : 0; }
+  return pkg._median;
 }
 
 const specificity = (k, P) => (k <= 1 ? 1 : Math.max(0, 1 - Math.log(k) / Math.log(Math.max(P, 2))));
@@ -152,7 +267,8 @@ export function infer(ix, fns, mode, opts = {}) {
     const v = views[k], m = new Map();
     const spec = specificity(v.size, P), size = sizeWeight(f.ntok);
     const common = v.size > o.maxShared; // a helper found in many packages (Babel/TS helpers, webpack runtime)
-    for (const [p, e] of v) m.set(p, common ? 0 : e.best ** o.simPower * spec * size);
+    const copies = o.ownership && !common && v.size > 1 ? copyHolders(ix, v, o) : null;
+    for (const [p, e] of v) m.set(p, common ? 0 : e.best ** o.simPower * spec * size * (copies?.has(p) ? o.copyWeight : 1));
     return m;
   });
   const bestOf = views.map((v) => Math.max(0, ...[...v.values()].map((e) => e.best)));
@@ -173,8 +289,9 @@ export function infer(ix, fns, mode, opts = {}) {
     for (const k of ks) for (const [i, sim] of views[k].get(p).recs) if (!(recBest.get(i) >= sim)) recBest.set(i, mode === "exact" ? 1 : sim);
     const cnt = new Float64Array(pkg.versions.length);
     for (const [i, sim] of recBest) for (const v of rangeIndices(ix.rec.versions[i])) cnt[v] += sim;
-    let best = 0, nt = 0; for (let v = 0; v < cnt.length; v++) if (pkg.nonTrivial[v] > 0) { const c = Math.min(1, cnt[v] / pkg.nonTrivial[v]); if (c > best) { best = c; nt = pkg.nonTrivial[v]; } }
-    return { c: best, nt };
+    const floor = o.minVersionShare > 0 ? o.minVersionShare * medianSize(pkg) : 0;
+    let best = 0, nt = 0, bv = 0; for (let v = 0; v < cnt.length; v++) if (pkg.nonTrivial[v] > 0 && pkg.nonTrivial[v] >= floor) { const c = Math.min(1, cnt[v] / pkg.nonTrivial[v]); if (c > best) { best = c; nt = pkg.nonTrivial[v]; bv = v; } }
+    return { c: best, nt, v: bv };
   };
   // Is p, with these not-yet-explained functions, in the bundle?
   //   big enough:  evidence ≥ minEvidence from ≥ minFunctions functions, and coverage ≥ minCoverage
@@ -184,8 +301,19 @@ export function infer(ix, fns, mode, opts = {}) {
   //                functions cannot reach minEvidence, but the bundle can contain most of them
   const accepts = (p, open, g) => {
     if (!open.length) return null;
-    const { c, nt } = coverage(p, open);
-    const big = g >= o.minEvidence && open.length >= o.minFunctions && (c >= o.minCoverage || g >= o.strongEvidence);
+    let fewExact = false;
+    if (o.minExact > 0 && mode !== "exact") { let x = 0; for (const k of open) if (views[k].get(p).exact && ++x >= o.minExact) break; fewExact = x < o.minExact; }
+    if (o.minUnique > 0) {
+      let u = 0;
+      for (const k of open) { let only = true; for (const [q, e] of views[k]) if (q !== p && e.best >= bestOf[k] - o.explainDelta && !depsAny(ix, q).has(p)) { only = false; break; } if (only && ++u >= o.minUnique) break; }
+      if (u < o.minUnique) return null;
+    }
+    const { c, nt, v } = coverage(p, open);
+    if (fewExact && c < o.exactUnlessCoverage) return null; // approximate look-alikes covering little of the package
+    // size-aware: the evidence needed is a share of what the package could ever give
+    const needEv = o.sizeAware ? Math.max(o.sizeFloor, Math.min(o.minEvidence, o.sizeShare * potential(ix, p, o)[v])) : o.minEvidence;
+    const needFns = o.sizeAware ? Math.min(o.minFunctions, Math.max(1, Math.ceil(nt / 2))) : o.minFunctions;
+    const big = g >= needEv && open.length >= needFns && (c >= o.minCoverage || g >= o.strongEvidence);
     const small = c >= o.smallCoverage && g >= o.smallEvidence && open.length >= Math.min(o.minFunctions, Math.ceil(nt / 2));
     return big || small ? c : null;
   };
@@ -205,7 +333,18 @@ export function infer(ix, fns, mode, opts = {}) {
     const c2 = accepts(p, all, g2);
     return c2 != null && c2 >= o.shareCoverage ? { p, g: g2, n: all.length, c: c2, shared: shared.length, shares: shared } : null;
   };
-  for (;;) {
+  if (o.algorithm === "independent") {
+    // every package on its own: all functions it matches about as well as their best match count
+    for (const [p, ks] of pkgFns) {
+      const mine = ks.filter((k) => ev[k].get(p) > 0 && views[k].get(p).best >= bestOf[k] - o.nearDelta);
+      let g = 0; for (const k of mine) g += ev[k].get(p);
+      const c = accepts(p, mine, g);
+      if (c == null) continue;
+      const sharedK = mine.filter((k) => [...views[k]].some(([q, e]) => q !== p && e.best >= bestOf[k] - o.nearDelta));
+      chosen.push({ p, gain: g, own: mine.length, coverage: c, shared: sharedK.length, explains: mine, shares: [], rank: g * c ** o.orderPower });
+    }
+    chosen.sort((a, b) => b.rank - a.rank);
+  } else for (;;) {
     let pick = null;
     for (const [p, ks] of pkgFns) {
       if (chosen.some((c) => c.p === p)) continue;
@@ -235,7 +374,7 @@ export function infer(ix, fns, mode, opts = {}) {
   }
   // ---- versions of each chosen package ----
   const lineCache = new Map();
-  return chosen.map(({ p, gain, own, coverage: cov, shared, explains, shares }) => {
+  const describe = ({ p, gain, own, coverage: cov, shared, explains, shares, viaDependency }) => {
     const pkg = ix.meta.packages[p], nv = pkg.versions.length;
     const score = new Float64Array(nv); let total = 0, nf = 0, nExact = 0, nLineage = 0;
     // which bundle functions vote for p's version:
@@ -337,13 +476,68 @@ export function infer(ix, fns, mode, opts = {}) {
       ...(consistent == null ? {} : { consistent, conflictFunctions: conflicts.map((k) => fns[k].k), ...(unionRange ? { unionRange: toRanges(unionRange), unionSize: unionRange.length } : {}) }),
       explains: explains.map((k) => fns[k].k), // the bundle functions (their index in the functions file) this package explains
       shares: shares.map((k) => fns[k].k),     // …and those it shares with a package chosen before it (same code in both references)
+      ...(viaDependency ? { viaDependency } : {}), // accepted as a declared dependency of this package
     };
-  });
+  };
+  const results = chosen.map(describe);
+  // ---- dependency confirmation ----
+  // a package that a found package declares as a dependency (at the found versions) is accepted
+  // with depMinFunctions distinct functions it matches (within depNear of their best match, ≥
+  // minSim), depMinExact of them exact — repeated, so dependencies of dependencies follow
+  if (o.depConfirm && ix.deps?.size) {
+    const kinds = String(o.depKinds).split(",").map((x) => x.trim()).filter(Boolean);
+    for (let i = 0; i < results.length; i++) {
+      if (chosen[i].viaDependency && !o.depFromConfirmed) continue;
+      const pi = chosen[i].p, perVersion = ix.deps.get(pi); if (!perVersion) continue;
+      const vs = ix.meta.packages[pi].versions, r = results[i], want = new Set();
+      for (const [a, b] of r.range) { const x = vs.indexOf(a), y = vs.indexOf(b); for (let v = x; v <= y && x >= 0; v++) { const e = perVersion.get(vs[v]) ?? {}; for (const kd of kinds) for (const d of e[kd] ?? []) want.add(d); } }
+      for (const d of want) {
+        if (chosen.some((c) => c.p === d)) continue;
+        const ks = (pkgFns.get(d) ?? []).filter((k) => ev[k].get(d) > 0 && views[k].get(d).best >= Math.max(o.minSim, bestOf[k] - o.depNear));
+        if (new Set(ks.map((k) => fns[k].id)).size < o.depMinFunctions) continue;
+        if (new Set(ks.filter((k) => views[k].get(d).exact).map((k) => fns[k].id)).size < o.depMinExact) continue;
+        // embedded: the parent's own reference holds most of this code (a prebuilt build with its
+        // dependencies compiled in) — then the dependency is not a separate package in the bundle
+        if (o.depEmbedded < 1 && ks.filter((k) => (views[k].get(pi)?.best ?? -1) >= bestOf[k] - o.depNear).length > o.depEmbedded * ks.length) continue;
+        let g = 0; for (const k of ks) g += ev[k].get(d);
+        const entry = { p: d, gain: g, own: ks.length, coverage: coverage(d, ks).c, shared: ks.length, explains: [], shares: ks, viaDependency: ix.meta.packages[pi].name };
+        chosen.push(entry); results.push(describe(entry));
+      }
+    }
+  }
+  if (o.depRanges !== "off" && ix.deps?.size) narrowByDeclaredRanges(ix, chosen, results, o);
+  return results;
+}
+
+function narrowByDeclaredRanges(ix, chosen, results, o) {
+  const at = new Map(chosen.map((c, i) => [c.p, results[i]]));
+  for (let i = 0; i < results.length; i++) {
+    const p = chosen[i].p, r = results[i], pkg = ix.meta.packages[p];
+    const wanted = [];
+    for (const [q, rq] of at) {
+      if (q === p || !rq.best) continue;
+      // every version still possible for the parent: the ranges any of them declares
+      const qv = ix.meta.packages[q].versions;
+      for (const [a, b] of rq.range) { const x = qv.indexOf(a), y = qv.indexOf(b); for (let v = x; v <= y && x >= 0; v++) {
+        const range = ix.deps.get(q)?.get(qv[v])?.ranges?.get(p);
+        if (range && !wanted.includes(range) && semver.validRange(range)) wanted.push(range);
+      } }
+    }
+    if (!wanted.length) continue;
+    const ok = pkg.versions.map((v) => wanted.some((w) => semver.valid(v) && semver.satisfies(v, w, { includePrerelease: false })));
+    if (!ok.some(Boolean)) continue;
+    const vs = pkg.versions, cur = new Set(); for (const [a, b] of r.range) { const x = vs.indexOf(a), y = vs.indexOf(b); for (let v = x; v <= y && x >= 0; v++) cur.add(v); }
+    let keep = [...cur].filter((v) => ok[v]).sort((a, b) => a - b);
+    if (!keep.length) { if (o.depRanges !== "override") continue; keep = ok.map((x, v) => (x ? v : -1)).filter((v) => v >= 0); }
+    const ranges = []; for (const v of keep) { const last = ranges[ranges.length - 1]; if (last && last[2] === v - 1) { last[1] = vs[v]; last[2] = v; } else ranges.push([vs[v], vs[v], v]); }
+    r.declaredRanges = wanted; r.rangeBeforeDeclared = r.range;
+    r.range = ranges.map(([a, b]) => [a, b]); r.rangeSize = keep.length; r.best = vs[keep[keep.length - 1]];
+  }
 }
 
 // Everything for one bundle: prepare, match, infer in every mode.
 export function detectBundle(ix, doc, opts = {}) {
-  const fns = matchBundle(ix, prepareBundle(doc, ix.meta.tier2_settings), opts);
+  const fns = matchBundle(ix, prepareBundle(doc, ix.meta.tier2_settings, !!ix.meta.canonical_require), opts);
   const stats = {
     functions: doc.functions?.length ?? 0, nonTrivial: fns.length,
     exactMatched: fns.filter((f) => f.exactPkgs.size).length,

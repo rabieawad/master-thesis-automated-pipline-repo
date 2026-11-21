@@ -34,6 +34,47 @@ export function wrapJson(content) {
     return "(" + text + ")";
 }
 
+// KEEP_EXPORTS=1: a deviation from the original, off by default. The original removes every export
+// statement together with the exported declaration, so ES-module packages lose most of their code.
+export const KEEP_EXPORTS = process.env.KEEP_EXPORTS === "1";
+
+function declaredNames(decl) {
+    if (!decl) return [];
+    if (decl.type === "FunctionDeclaration" || decl.type === "ClassDeclaration") return decl.id ? [decl.id.name] : [];
+    if (decl.type === "VariableDeclaration") {
+        const out = [];
+        const walkPat = (p) => {
+            if (!p) return;
+            if (p.type === "Identifier") out.push(p.name);
+            else if (p.type === "ObjectPattern") p.properties.forEach((q) => walkPat(q.type === "RestElement" ? q.argument : q.value));
+            else if (p.type === "ArrayPattern") p.elements.forEach(walkPat);
+            else if (p.type === "AssignmentPattern") walkPat(p.left);
+            else if (p.type === "RestElement") walkPat(p.argument);
+        };
+        decl.declarations.forEach((d) => walkPat(d.id));
+        return out;
+    }
+    return [];
+}
+const exportName = (n) => (n.type === "Literal" ? String(n.value) : n.name);
+const setExport = (name, value) => "_$__e.exports[" + JSON.stringify(name) + "]=" + value + ";";
+
+export function keepExport(node, code) {
+    const src = (n) => code.slice(n.start, n.end);
+    if (node.type === "ExportNamedDeclaration") {
+        if (node.declaration) return src(node.declaration) + ";" + declaredNames(node.declaration).map((n) => setExport(n, n)).join("");
+        if (node.source) return node.specifiers.map((s) => setExport(exportName(s.exported), "require(" + JSON.stringify(node.source.value) + ")[" + JSON.stringify(exportName(s.local)) + "]")).join("");
+        return node.specifiers.map((s) => setExport(exportName(s.exported), exportName(s.local))).join("");
+    }
+    if (node.type === "ExportDefaultDeclaration") {
+        const d = node.declaration;
+        if ((d.type === "FunctionDeclaration" || d.type === "ClassDeclaration") && d.id) return src(d) + ";" + setExport("default", d.id.name);
+        return setExport("default", "(" + src(d) + ")");
+    }
+    if (node.type === "ExportAllDeclaration") return "require(" + JSON.stringify(node.source.value) + ");";
+    return "";
+}
+
 export function rewriteImports(code) {
     // Parse AST with acorn
     const ast = parseLoose(code);
@@ -56,7 +97,11 @@ export function rewriteImports(code) {
 
     // Replace from back to front
     for (const impExp of importsExports.toReversed()) {
-        if (impExp.type.includes("xport")) {
+        if (impExp.type.includes("xport") && KEEP_EXPORTS) {
+            // KEEP_EXPORTS=1 (not in the original): keep the exported code and make it reachable
+            // through _$__e.exports, so swc's dead-code removal keeps it too.
+            code = code.slice(0, impExp.start) + keepExport(impExp, code) + code.slice(impExp.end);
+        } else if (impExp.type.includes("xport")) {
             const exp = impExp;
             // Faithful to the original aletheia-preprocessor.mjs: remove the whole export
             // statement ("// todo just remove them for now"). Exported declarations are

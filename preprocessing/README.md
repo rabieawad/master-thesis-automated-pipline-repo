@@ -535,6 +535,15 @@ is redone from scratch), skips every package that already has a partial, and ret
 failed (a failed package deliberately leaves no partial). If the final outputs are already there and
 no partials remain, both streamed steps report **"already complete"** and stop.
 
+### `KEEP_EXPORTS` (tier 2, off by default — not in the original)
+
+Aletheia's pseudo-bundler removes every `export` statement together with the exported declaration
+("todo just remove them for now"), so ES-module packages lose most of their code in the reference.
+`KEEP_EXPORTS=1` keeps the exported code and makes it reachable through `_$__e.exports` (so swc's
+dead-code removal keeps it too): `export function f` → `function f…;_$__e.exports["f"]=f`,
+`export default X` → `_$__e.exports["default"]=X`, `export {a as b}` → `_$__e.exports["b"]=a`,
+`export * from "m"` → `require("m")`. Off, the step is byte-for-byte the original.
+
 ### `MINIFY` (both tiers, both modes)
 
 The bundlers (tier-1 `03-bundle-and-sbom.mjs`, tier-2 `03_pseudo-bundle.mjs`) only read
@@ -569,6 +578,7 @@ their outputs.
 
 | step | script | reads | writes |
 |---|---|---|---|
+| 00 · Normalise the bundles (optional, `NORMALIZE`) | `00_normalize-bundles.mjs` | tier 1 `05_selected_bundles/bundles/` (with source maps) | `00_normalized/bundles/` (bundle + composed source map), `00_normalized/functions/` |
 | 01 · Build the search index | `01_build-index.mjs` | tier 2 `05_deduplicated_functions/packages/`, `lineages/` | `01_index/` (`meta.json`, `records.json`, `sigs.bin`, `lineages/`) |
 | 02 · Detect packages and versions | `02_detect.mjs` | the index; tier 1 `06_extracted_functions/`, and for the evaluation `05_selected_bundles/sbom/` and `bundles/` (source maps) | `02_detections/bundles/<bundle>.json` |
 | 03 · Report | `03_report.mjs` | step 02's files | `03_report/report.md`, `summary.json`, `detections.csv`, `evaluation.csv` |
@@ -576,6 +586,14 @@ their outputs.
 Step 01 keeps its index while tier 2's files are unchanged (names, sizes, times); step 02 skips a
 bundle already done with the same settings and index, so changing a setting and choosing *Redo from
 step 02* redoes only what changed. The *Report* tab shows `report.md`.
+
+**Step 00 (optional): bundles in the reference's shape.** The bundles come from webpack + Terser
+and keep modern syntax; the reference is Aletheia's pseudo-bundles put through swc (minify,
+`compress.unsafe`, ES5). Step 00 puts every bundle through exactly that swc call (byte-identical to
+`tier2/lib/aletheia-bundler.mjs` `minify()`), drops the helpers swc injects (`_class_call_check`…),
+keeps a source map composed with the bundle's own, and extracts the functions with the same
+collector as tiers 1 and 2. Step 02 then reads these functions. Tier 1, tier 2 and the reference are
+untouched. On the test bed it raises exact matches from 50 % to 70 % of the bundle functions.
 
 ### How a bundle is read
 
@@ -684,13 +702,30 @@ packages (`mealz-components` holds lit) that compete for the same code.
 
 `MODES`, `EVALUATE` (off = detections only, for bundles without an SBOM), `PACK_OUTPUTS`; matching:
 `MIN_SIM`, `MIN_BANDS`, `MAX_SHARED`; packages: `MIN_EVIDENCE`, `MIN_FUNCTIONS`, `MIN_COVERAGE`,
-`SMALL_COVERAGE`, `SHARE_COVERAGE`; versions: `VERSION_METHOD` (`intersect` or `vote`),
+`SMALL_COVERAGE`, `SHARE_COVERAGE`, `ALGORITHM` (`greedy`: a package takes the functions it matches;
+`independent`: every package is judged on its own, a shared function counts for each), `SIZE_AWARE`
+(a package needs half the evidence it could ever give instead of the fixed minimum),
+`MIN_VERSION_SHARE` (ignore stub versions below this share of the package's median size, e.g. 0.1);
+`NORMALIZE` (`off`, `swc`, `swc2`: step 00); versions: `VERSION_METHOD` (`intersect` or `vote`),
 `VERSION_FALLBACK` (`most` or `union`), and for voting `VERSION_TOLERANCE`, `VERSION_PICK`
 (`latest` or `parsimony`).
+
+### Settings that fix the failure modes (`tier3/RESULTS-loop.md`)
+
+`NORMALIZE` **swc+modules** (step 00 also rewrites webpack's module wrappers into Aletheia's
+`function(_$__e){… require(…) …}`), `CANONICAL_REQUIRE` (step 01: `require('./x')` and `require(12)`
+read the same), `DEPENDENCIES` (step 01b: declared dependencies and ranges per version from the npm
+registry), `DEP_CONFIRM` (a declared dependency of a found package is accepted on one exact match),
+`MIN_UNIQUE` 1 (a package needs a function no other package holds), `MIN_EXACT` 2 (unless approximate
+matches cover ≥ 30 % of it), `DEP_RANGES` override (declared ranges narrow versions),
+`MIN_VERSION_SHARE` 0.1 — with a tier-2 reference built with `KEEP_EXPORTS` 1. All off by default.
+On the test bed strict F1 0.947 (from 0.732); on the pilot set 0.879 (from 0.692).
 
 ### By hand
 
 ```bash
+# optional: bundles through Aletheia's swc call first; then give step 02 out3/00_normalized/{functions,bundles}
+node tier3/00_normalize-bundles.mjs --bundles <tier1 out>/05_selected_bundles/bundles --out out3/00_normalized
 node tier3/01_build-index.mjs <tier2 out>/05_deduplicated_functions out3/01_index
 node tier3/02_detect.mjs --index out3/01_index --functions <tier1 out>/06_extracted_functions \
      --bundles <tier1 out>/05_selected_bundles/bundles --sbom <tier1 out>/05_selected_bundles/sbom \

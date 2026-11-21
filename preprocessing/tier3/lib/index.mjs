@@ -15,6 +15,8 @@
 import { readFileSync, writeFileSync, readdirSync, existsSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
+import { canonicalRequire } from "./modules.mjs";
+import { isPackageFile, keyOfPackageFile, readJsonFile } from "../../tier2/lib/json-gz.mjs";
 import { sketch, BINS, BANDS, ROWS, SHINGLE, LSH } from "./sketch.mjs";
 
 export const INDEX_VERSION = 1;
@@ -36,22 +38,22 @@ export function sourceSignature(dedupDir) {
   const h = createHash("sha256");
   for (const sub of ["packages", "lineages"]) {
     const d = join(dedupDir, sub); if (!existsSync(d)) { h.update(`${sub}:none\n`); continue; }
-    for (const f of readdirSync(d).filter((x) => x.endsWith(".json")).sort()) { const st = statSync(join(d, f)); h.update(`${sub}/${f}:${st.size}:${Math.round(st.mtimeMs)}\n`); }
+    for (const f of readdirSync(d).filter((x) => x.endsWith(".json") || x.endsWith(".json.gz")).sort()) { const st = statSync(join(d, f)); h.update(`${sub}/${f}:${st.size}:${Math.round(st.mtimeMs)}\n`); }
   }
   return h.digest("hex").slice(0, 24);
 }
 
 // Build the index from a tier-2 dedup folder (the one holding packages/ and lineages/).
-export function buildIndex(dedupDir, outDir, { log = () => {} } = {}) {
+export function buildIndex(dedupDir, outDir, { log = () => {}, canonicalRequire: canon = false } = {}) {
   const PKG = join(dedupDir, "packages"), LIN = join(dedupDir, "lineages");
   if (!existsSync(PKG)) throw new Error(`no per-package files in ${PKG} (tier 2 must run in streamed mode)`);
   mkdirSync(join(outDir, "lineages"), { recursive: true });
-  const files = readdirSync(PKG).filter((f) => f.endsWith(".json")).sort();
+  const files = readdirSync(PKG).filter(isPackageFile).sort();
   const packages = [], rec = { id: [], pkg: [], versions: [], lineage: [], ntok: [], nodes: [] };
   const sigChunks = []; let n = 0, settings = null, lineageFiles = 0;
   for (const [pi, f] of files.entries()) {
-    const key = f.slice(0, -5), t0 = Date.now();
-    const doc = JSON.parse(readFileSync(join(PKG, f), "utf8"));
+    const key = keyOfPackageFile(f), t0 = Date.now();
+    const doc = readJsonFile(join(PKG, f));
     settings = settings ?? doc.settings;
     const vIndex = new Map(doc.versions.map((v, i) => [v, i]));
     const nonTrivial = new Array(doc.versions.length).fill(0);
@@ -60,14 +62,20 @@ export function buildIndex(dedupDir, outDir, { log = () => {} } = {}) {
       const vs = Object.keys(fn.occurrences ?? {}).map((v) => vIndex.get(v)).filter((i) => i != null);
       if (fn.trivial || !vs.length) continue;
       for (const i of vs) nonTrivial[i]++;
-      const { sig, ntok } = sketch(fn.textNorm ?? fn.text ?? "");
-      rec.id.push(fn.id); rec.pkg.push(pi); rec.versions.push(toFlatRanges(vs)); rec.lineage.push(fn.lineage ?? null);
+      // canonical require (option): require('./x') and require(12) become require(0), on both sides
+      let text = fn.textNorm ?? fn.text ?? "", id = fn.id;
+      if (canon && fn.keyedOn === "textNorm" && text.includes("require(")) {
+        text = canonicalRequire(text);
+        id = createHash("sha256").update(fn.signature + "\0textNorm\0" + text).digest("hex").slice(0, 24);
+      }
+      const { sig, ntok } = sketch(text);
+      rec.id.push(id); rec.pkg.push(pi); rec.versions.push(toFlatRanges(vs)); rec.lineage.push(fn.lineage ?? null);
       rec.ntok.push(ntok); rec.nodes.push(fn.metrics?.nodes ?? 0); sigChunks.push(sig); n++;
     }
     // lineage markers, compact: only lineages with markers (≥ 2 variants)
     let hasLineages = false;
-    if (existsSync(join(LIN, f))) {
-      const L = JSON.parse(readFileSync(join(LIN, f), "utf8")), out = {};
+    if (existsSync(join(LIN, `${key}.json`))) {
+      const L = JSON.parse(readFileSync(join(LIN, `${key}.json`), "utf8")), out = {};
       for (const l of L.lineages) {
         if (!l.markers?.length) continue;
         out[l.lineage] = {
@@ -75,7 +83,7 @@ export function buildIndex(dedupDir, outDir, { log = () => {} } = {}) {
           m: l.markers.map((m) => [m.code, m.variants]),
         };
       }
-      writeAtomic(join(outDir, "lineages", f), JSON.stringify(out));
+      writeAtomic(join(outDir, "lineages", `${key}.json`), JSON.stringify(out));
       hasLineages = true; lineageFiles++;
     }
     packages.push({ name: doc.package, key, versions: doc.versions, nonTrivial, start, end: n, hasLineages });
@@ -87,7 +95,7 @@ export function buildIndex(dedupDir, outDir, { log = () => {} } = {}) {
   writeAtomic(join(outDir, "records.json"), JSON.stringify(rec));
   const meta = { index_version: INDEX_VERSION, built_at: new Date().toISOString(), source: dedupDir, source_signature: sourceSignature(dedupDir),
     sketch: { bins: BINS, bands: BANDS, rows: ROWS, shingle: SHINGLE }, tier2_settings: settings,
-    records: n, packages, lineage_files: lineageFiles };
+    records: n, packages, lineage_files: lineageFiles, canonical_require: !!canon };
   writeAtomic(join(outDir, "meta.json"), JSON.stringify(meta));
   return meta;
 }
@@ -116,5 +124,27 @@ export function loadIndex(dir) {
     return lineageCache.get(pi);
   };
   const sigOf = (i) => sigs.subarray(i * BINS, (i + 1) * BINS);
-  return { meta, rec, sigs, sigOf, byId, lsh, pkgsOfId, lineagesOf, N, P: meta.packages.length };
+  // declared dependencies (step 01b, optional): package index -> Map(version -> { dependencies,
+  // peerDependencies, optionalDependencies: package indices, ranges: Map(package index -> semver range) })
+  const deps = new Map();
+  const depFile = join(dir, "dependencies.json");
+  if (existsSync(depFile)) {
+    const byName = new Map(meta.packages.map((p, i) => [p.name, i]));
+    for (const [n, perVersion] of Object.entries(JSON.parse(readFileSync(depFile, "utf8")))) {
+      const i = byName.get(n); if (i == null || Array.isArray(perVersion)) continue;
+      const m = new Map();
+      for (const [v, e] of Object.entries(perVersion)) {
+        if (Array.isArray(e)) continue; // an older format
+        // kinds[k] = package indices; ranges: package index -> declared semver range (any kind)
+        const kinds = { ranges: new Map() };
+        for (const [k, l] of Object.entries(e)) {
+          const entries = Array.isArray(l) ? l.map((d) => [d, "*"]) : Object.entries(l);
+          kinds[k] = []; for (const [d, r] of entries) { const i = byName.get(d); if (i == null) continue; kinds[k].push(i); if (!kinds.ranges.has(i)) kinds.ranges.set(i, r); }
+        }
+        m.set(v, kinds);
+      }
+      deps.set(i, m);
+    }
+  }
+  return { meta, rec, sigs, sigOf, byId, lsh, pkgsOfId, lineagesOf, deps, N, P: meta.packages.length };
 }

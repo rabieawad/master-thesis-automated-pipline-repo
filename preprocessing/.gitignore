@@ -1,0 +1,16 @@
+# dependencies
+node_modules/
+
+# run outputs and scratch space (large, machine-specific)
+projects/
+tmp/
+*-undeleted/
+_stream/
+.pnpm-store/
+
+# packed step outputs
+*.tgz
+
+# editor / OS
+.DS_Store
+*.log
